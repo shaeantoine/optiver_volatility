@@ -101,6 +101,5 @@ for (i in 1 : length(vol)) {
                               sqrt(quar[[i]]$quarticity[5:(len.train - 1)]))
 }
 
-# HAV-RV performs well for some time buckets
 summary(HAV.wls.models[[218]])
 ```
