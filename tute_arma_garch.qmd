@@ -1,0 +1,180 @@
+---
+title: "tute_arma_garch"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    df-print: paged
+    table-of-contents: true
+---
+
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+```
+
+## setup
+
+```{r}
+stock <- read.csv("data/individual_book_train/stock_111.csv")
+#dim(stock)
+#head(stock)
+```
+
+2226361row 11col
+
+```{r}
+stock <- stock %>% mutate(
+  WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)
+  )
+
+stock <- stock %>% mutate(
+  BidAskSpread = ask_price1 / bid_price1 - 1
+  )
+
+length(unique(stock$time_id))
+max(stock$time_id)
+```
+
+### log return
+
+```{r}
+log_rs <- list()
+time_IDs <- unique(stock$time_id)
+
+for (i in 1 : length(time_IDs)) {
+  sec <- stock %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- stock %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_rs[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_rs[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_rs[[i]] <- rbind(log_rs[[i]], new.df)
+    log_rs[[i]] <- log_rs[[i]][order(log_rs[[i]]$time), ]
+  }
+}
+
+
+```
+
+### realize volatility
+
+```{r}
+vol <- list()
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+for (i in 1 : length(log_rs)) {
+  log_rs[[i]] <- log_rs[[i]] %>% mutate(time_bucket = ceiling(time / 30))
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_rs[[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+}
+```
+
+### visual
+
+```{r}
+#ggplot(data = log_rs[[3830]], aes(x = time, y = log_return)) + geom_line()
+#ggplot(data = vol[[3830]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
+```
+
+## lab model
+
+### model
+
+```{r,warning=FALSE,message=FALSE}
+spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+ARMA_GARCH.models <- list()
+
+for (i in 1 : length(vol)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_rs[[i]] %>%
+                                        filter(time <= 480) %>% pull(log_return),
+                                      solver = 'hybrid')
+  }
+```
+
+### predictor
+
+```{r}
+RV.pred <- rep(0, length(vol))
+for (i in 1 : length(vol)) {
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 120, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  RV.pred[i] <- mean(sqrt(colSums(future.path ^ 2)))
+}
+
+tail(RV.pred)
+```
+
+## Prediction measure
+
+```{r}
+#vol.train <- list()
+vol.val <- list()
+
+for (i in 1 : length(log_rs)) {
+  #vol.train[[i]] <- vol[[i]][1:16, ]
+  vol.val[[i]] <- vol[[i]][-(1:16),]
+}
+
+
+vol_mean <- vector()
+for (i in 1 : length(vol.val)){
+  vol_mean <- c(vol_mean, mean(vol.val[[i]]$volatility))
+}
+
+
+MSE.ag <- vector()
+QLIKE.ag <- vector()
+ACC.ag <- c()
+for (i in 2 : length(vol)) {
+  MSE.ag <- c(MSE.ag,mean( vol_mean[i] - RV.pred[i]) ^ 2)
+  QLIKE.ag <- c(QLIKE.ag, mean(vol_mean[i]/ RV.pred[i] - 
+                                 log(vol_mean[i]/ RV.pred[i]) - 1))
+  
+  ACC.ag <- c(ACC.ag,(RV.pred[i]/vol_mean[i])*100)
+}
+```
+
+### Mean
+
+```{r}
+mean(MSE.ag)
+mean(QLIKE.ag)
+mean(ACC.ag)
+```
+
+### MSE
+
+```{r}
+boxplot(MSE.ag, horizontal = TRUE)
+```
+
+### QLIKE
+
+```{r}
+boxplot(QLIKE.ag, horizontal = TRUE)
+```
+
+## line graph
+
+```{r}
+options(scipen = 999)
+time_slot <- c(1:length(RV.pred))
+df = data.frame(time_slot,vol_mean,RV.pred)
+
+
+ggplot(tail(df,n=25), aes(x=time_slot)) +
+  geom_line(aes(y = vol_mean),color = "red")+
+  geom_line(aes(y = RV.pred),color = "blue", linetype="twodash")
+```
