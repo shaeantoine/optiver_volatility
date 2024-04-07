@@ -81,7 +81,7 @@ for (i in 1 : length(log_rs)) {
 
 ```{r}
 #ggplot(data = log_rs[[3830]], aes(x = time, y = log_return)) + geom_line()
-#ggplot(data = vol[[3830]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
+ggplot(data = vol[[3830]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
 ```
 
 ## lab model
@@ -127,10 +127,11 @@ for (i in 1 : length(log_rs)) {
   vol.val[[i]] <- vol[[i]][-(1:16),]
 }
 
-
+vol_sum <- vector()
 vol_mean <- vector()
 for (i in 1 : length(vol.val)){
   vol_mean <- c(vol_mean, mean(vol.val[[i]]$volatility))
+  vol_sum <- c(vol_sum, sum(vol.val[[i]]$volatility))
 }
 
 
@@ -171,10 +172,240 @@ boxplot(QLIKE.ag, horizontal = TRUE)
 ```{r}
 options(scipen = 999)
 time_slot <- c(1:length(RV.pred))
-df = data.frame(time_slot,vol_mean,RV.pred)
+df = data.frame(time_slot,vol_mean,RV.pred,vol_sum)
 
 
 ggplot(tail(df,n=25), aes(x=time_slot)) +
   geom_line(aes(y = vol_mean),color = "red")+
-  geom_line(aes(y = RV.pred),color = "blue", linetype="twodash")
+  geom_line(aes(y = RV.pred),color = "blue", linetype="twodash")+
+  geom_line(aes(y = vol_sum),color = "yellow3")
+```
+
+```{r}
+tail(vol_mean)
+tail(vol_sum)
+tail(RV.pred)
+```
+
+# **\*\*\*Difference time split**
+
+```{r}
+vol_2 <- list()
+
+for (i in 1 : length(log_rs)) {
+  vol_2[[i]] <- vol[[i]]
+}
+
+vol2_sum <- vector()
+vol2_mean <- vector()
+for (i in 1 : length(vol_2)){
+  vol2_mean <- c(vol2_mean, mean(vol_2[[i]]$volatility))
+  vol2_sum <- c(vol2_sum, sum(vol_2[[i]]$volatility))
+}
+
+
+```
+
+## n-step ahead
+
+```{r}
+n = round(0.8*length(vol_2))
+
+vol2_test = vol2_sum[-(1:n)]
+vol2_train = vol2_sum[1:n]
+
+spec2 <- ugarchspec(variance.model=list(model="sGARCH", garchOrder=c(1,1)), 
+                    mean.model=list(armaOrder=c(0,0)), 
+                   distribution.model = "norm")
+
+spec3 <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+mod2 <- ugarchfit(spec = spec2, data = vol2_train)
+mod3 <- ugarchfit(spec = spec3, data = vol2_train)
+
+setfixed(spec2) <- as.list(coef(mod2))
+setfixed(spec3) <- as.list(coef(mod3))
+
+pred2 <- fitted(ugarchpath(spec = spec2, n.sim = length(vol2_test), m.sim = 1000))
+pred3 <- fitted(ugarchpath(spec = spec3, n.sim = length(vol2_test), m.sim = 1000))
+
+pred2r <- vector()
+pred3r <- vector()
+for (i in 1 : length(vol2_test)){
+  #pred2r[i] <- mean(pred2[i,])
+  #pred3r[i] <- mean(pred3[i,])
+  pred2r[i] <- mean(sqrt(pred2[i,] ^ 2))
+  pred3r[i] <- mean(sqrt(pred3[i,] ^ 2))
+}
+
+```
+
+### evaluation
+
+```{r}
+MSE2 <- vector()
+MSE3 <- vector()
+
+QLIKE2 <- vector()
+QLIKE3 <- vector()
+
+for (i in 1 : length(pred2r)) {
+  MSE2 <- c(MSE2,mean( vol2_test[i] - pred2r[i]) ^ 2)
+  MSE3 <- c(MSE3,mean( vol2_test[i] - pred3r[i]) ^ 2)
+  
+  QLIKE2 <- c(QLIKE2, mean(vol2_test[i]/ pred2r[i] - 
+                                 log(vol2_test[i]/ pred2r[i]) - 1))
+  QLIKE3 <- c(QLIKE3, mean(vol2_test[i]/ pred3r[i] - 
+                                 log(vol2_test[i]/ pred3r[i]) - 1))
+}
+
+mean(MSE2)
+mean(MSE3)
+mean(QLIKE2)
+mean(QLIKE3)
+```
+
+### plot
+
+```{r}
+time_slot <- c(1:length(pred2r))
+df_n = data.frame(time_slot,vol2_test,pred2r,pred3r)
+
+
+ggplot(tail(df_n,n = 50), aes(x=time_slot)) +
+  geom_line(aes(y = vol2_test),color = "red")+
+  geom_line(aes(y = pred2r),color = "blue", linetype="twodash")+
+  geom_line(aes(y = pred3r),color = "green", linetype="twodash")
+
+```
+
+## 10 step ahead
+
+```{r}
+n = length(vol_2)-10
+
+vol2_test = vol2_sum[-(1:n)]
+vol2_train = vol2_sum[1:n]
+
+spec2_10 <- ugarchspec(variance.model=list(model="sGARCH", garchOrder=c(1,1)), 
+                    mean.model=list(armaOrder=c(0,0)), 
+                   distribution.model = "norm")
+
+spec3_10 <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+mod2_10 <- ugarchfit(spec = spec2_10, data = vol2_train)
+mod3_10 <- ugarchfit(spec = spec3_10, data = vol2_train)
+
+setfixed(spec2_10) <- as.list(coef(mod2_10))
+setfixed(spec3_10) <- as.list(coef(mod3_10))
+
+pred2_10 <- fitted(ugarchpath(spec = spec2_10, n.sim = length(vol2_test), m.sim = 1000))
+pred3_10 <- fitted(ugarchpath(spec = spec3_10, n.sim = length(vol2_test), m.sim = 1000))
+
+pred2r_10 <- vector()
+pred3r_10 <- vector()
+for (i in 1 : length(vol2_test)){
+  pred2r_10[i] <- mean(pred2_10[i,])
+  pred3r_10[i] <- mean(pred3_10[i,])
+  #pred2r_10[i] <- mean(sqrt(pred2_10[i,] ^ 2))
+  #pred3r_10[i] <- mean(sqrt(pred3_10[i,] ^ 2))
+}
+```
+
+### evaluation
+
+```{r}
+MSE2_10 <- vector()
+MSE3_10 <- vector()
+
+QLIKE2_10 <- vector()
+QLIKE3_10 <- vector()
+
+for (i in 1 : length(pred2r_10)) {
+  MSE2_10 <- c(MSE2_10,mean( vol2_test[i] - pred2r_10[i]) ^ 2)
+  MSE3_10 <- c(MSE3_10,mean( vol2_test[i] - pred3r_10[i]) ^ 2)
+  
+  QLIKE2_10 <- c(QLIKE2_10, mean(vol2_test[i]/ pred2r_10[i] - 
+                                 log(vol2_test[i]/ pred2r_10[i]) - 1))
+  QLIKE3_10 <- c(QLIKE3_10, mean(vol2_test[i]/ pred3r_10[i] - 
+                                 log(vol2_test[i]/ pred3r_10[i]) - 1))
+}
+
+mean(MSE2_10)
+mean(MSE3_10)
+mean(QLIKE2_10)
+mean(QLIKE3_10)
+```
+
+### plot
+
+```{r}
+time_slot <- c(1:length(pred2r_10))
+df_10 = data.frame(time_slot,vol2_test,pred2r_10,pred3r_10)
+
+
+ggplot(df_10, aes(x=time_slot)) +
+  geom_line(aes(y = vol2_test),color = "red")+
+  geom_line(aes(y = pred2r_10),color = "blue", linetype="twodash")+
+  geom_line(aes(y = pred3r_10),color = "black", linetype="twodash")
+```
+
+## 1 step ahead
+
+```{r}
+n = length(vol_2)-1
+
+vol2_test = vol2_sum[-(1:n)]
+vol2_train = vol2_sum[1:n]
+
+spec2_1 <- ugarchspec(variance.model=list(model="sGARCH", garchOrder=c(1,1)), 
+                    mean.model=list(armaOrder=c(0,0)), 
+                   distribution.model = "norm")
+
+spec3_1 <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+mod2_1 <- ugarchfit(spec = spec2_1, data = vol2_train)
+mod3_1 <- ugarchfit(spec = spec3_1, data = vol2_train)
+
+setfixed(spec2_1) <- as.list(coef(mod2_1))
+setfixed(spec3_1) <- as.list(coef(mod3_1))
+
+pred2_1 <- fitted(ugarchpath(spec = spec2_1, n.sim = length(vol2_test), m.sim = 1000))
+pred3_1 <- fitted(ugarchpath(spec = spec3_1, n.sim = length(vol2_test), m.sim = 1000))
+
+pred2r_1 <- vector()
+pred3r_1 <- vector()
+for (i in 1 : length(vol2_test)){
+  #pred2r_1[i] <- mean(pred2_1[i,])
+  #pred3r_1[i] <- mean(pred3_1[i,])
+  pred2r_1[i] <- mean(sqrt(pred2_1[i,] ^ 2))
+  pred3r_1[i] <- mean(sqrt(pred3_1[i,] ^ 2))
+}
+```
+
+```{r}
+
+MSE2_1 <- mean((vol2_test - pred2r_1)^2)
+MSE3_1 <- mean((vol2_test - pred3r_1)^2)
+  
+QLIKE2_1 <- mean(vol2_test/ pred2r_1 - log(vol2_test/ pred2r_1) - 1)
+QLIKE3_1 <- mean(vol2_test/ pred3r_1 - log(vol2_test/ pred3r_1) - 1)
+
+
+MSE2_1
+MSE3_1
+QLIKE2_1
+QLIKE3_1
+```
+
+```{r}
+vol2_test
+pred2r_1
+pred3r_1
 ```
