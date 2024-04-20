@@ -21,7 +21,7 @@ library(rugarch)
 ## set up
 
 ```{r}
-stock <- read.csv("data/individual_book_train/stock_120.csv")
+stock <- read.csv("data/individual_book_train/stock_100.csv")
 ```
 
 ```{r}
