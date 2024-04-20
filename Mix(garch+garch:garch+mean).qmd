@@ -1,0 +1,231 @@
+---
+title: "Mix garch + garch / garch + random walk(mean)"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    df-print: paged
+    table-of-contents: true
+---
+
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+```
+
+## set up
+
+```{r}
+stock <- read.csv("data/individual_book_train/stock_120.csv")
+```
+
+```{r}
+stock <- stock %>% mutate(
+  WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)
+  )
+
+stock <- stock %>% mutate(
+  BidAskSpread = ask_price1 / bid_price1 - 1
+  )
+
+log_rs <- list()
+#time_IDs <- unique(stock$time_id)
+time_IDs <- unique(stock[, 1])[1:500]
+
+
+for (i in 1 : length(time_IDs)) {
+  sec <- stock %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- stock %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_rs[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_rs[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_rs[[i]] <- rbind(log_rs[[i]], new.df)
+    log_rs[[i]] <- log_rs[[i]][order(log_rs[[i]]$time), ]
+  }
+}
+vol <- list()
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+for (i in 1 : length(log_rs)) {
+  log_rs[[i]] <- log_rs[[i]] %>% mutate(time_bucket = ceiling(time / 30))
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_rs[[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+}
+```
+
+```{r}
+acf(log_rs[[1]]$log_return)
+```
+
+```{r,warning=FALSE,message=FALSE}
+spec <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(0, 0)), 
+                   distribution.model = "norm")
+ARMA_GARCH.models <- list()
+
+for (i in 1 : length(vol)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_rs[[i]] %>% 
+                                        filter(time <= 480) %>% pull(log_return),
+                                      solver = 'hybrid')
+  }
+```
+
+```{r}
+pred1 <- rep(0, length(vol))
+for (i in 1 : length(vol)) {
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 120, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred1[i] <- mean(sqrt(colSums(future.path ^ 2)))
+}
+```
+
+```{r}
+vol.train <- list()
+vol.val <- list()
+
+for (i in 1 : length(log_rs)) {
+  vol.train[[i]] <- vol[[i]][1:16, ]
+  vol.val[[i]] <- vol[[i]][-(1:16), ]
+}
+
+vol_mean_test <- vector()
+vol_mean_train <- vector()
+for (i in 1 : length(vol)){
+  vol_mean_test <- c(vol_mean_test, mean(vol.val[[i]]$volatility))
+  vol_mean_train <- c(vol_mean_train, mean(vol.train[[i]]$volatility))
+}
+
+```
+
+## Garch(1,1) result
+
+```{r}
+time_slot <- c(1 : length(vol))
+df = data.frame(time_slot,vol_mean_test,pred1)
+
+
+ggplot(tail(df,n = 50), aes(x=time_slot))+
+  geom_line(aes(y = vol_mean_test),color = "red")+
+  geom_line(aes(y = pred1),color = "blue", linetype="twodash")
+```
+
+# Mix 1 rolling window garch(1,1) + aggegrate/expand garch(1,1)
+
+just first 50 take too long to run
+
+```{r}
+##garch expanding window
+
+GARCH_ex<- list()
+log_2 <- vector()
+
+for (i in 1 : 50) {
+  aa <- log_rs[[i]]$log_return[1:480]
+  log_2 <- c(log_2, aa)
+  GARCH_ex[[i]] <- ugarchfit(spec = spec, data = log_2 ,solver = 'hybrid')
+}
+
+```
+
+```{r}
+pred2 <- rep(0, 50)
+for (i in 1 : 50) {
+  fspec <- getspec(GARCH_ex[[i]])
+  setfixed(fspec) <- as.list(coef(GARCH_ex[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 120, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred2[i] <- mean(sqrt(colSums(future.path ^ 2)))
+}
+```
+
+## predicttion 2 result
+
+```{r}
+pred1_50 <- head(pred1,n = 50)
+vol50 <- head(vol_mean_test,n =50)
+time_slot <- c(1:length(pred2))
+
+df2 = data.frame(time_slot,pred2,vol50,pred1_50)
+
+ggplot(tail(df2,n=10), aes(x=time_slot)) +
+  geom_line(aes(y = vol50),color = "red")+
+  geom_line(aes(y = pred2),color = "blue", linetype="twodash")
+```
+
+## mix model result
+
+```{r}
+mix_1 = (0.5*pred2) + (0.5*pred1_50)
+df2$mix_1 = mix_1
+
+ggplot(head(df2,n=10), aes(x=time_slot)) +
+  geom_line(aes(y = vol50),color = "red")+
+  geom_line(aes(y = mix_1),color = "black", linetype="twodash")+
+  geom_line(aes(y = pred1_50),color = "orange", linetype="twodash")+
+  geom_line(aes(y = pred2),color = "blue", linetype="twodash")
+```
+
+### MSE/Qlike
+
+```{r}
+MSE1 <- vector()
+QLIKE1 <- vector()
+for (i in 1 : length(mix_1)) {
+  MSE1 <- c(MSE1,mean( vol50[i] - mix_1[i]) ^ 2)
+  QLIKE1 <- c(QLIKE1, mean(vol50[i]/ mix_1[i] - 
+                                 log(vol50[i]/ mix_1[i]) - 1))
+}
+```
+
+```{r}
+boxplot(MSE1, horizontal = TRUE)
+```
+
+```{r}
+boxplot(QLIKE1, horizontal = TRUE)
+```
+
+# Mix 2 Garch(1,1) + mean random walk
+
+```{r}
+mix_2 <- (0.5 * vol_mean_train) + (0.5 * pred1)
+```
+
+```{r}
+time_slot <- c(1:length(pred1))
+df3 = data.frame(time_slot,pred1,vol_mean_test,vol_mean_train,mix_2)
+
+ggplot(tail(df3,n=10), aes(x=time_slot)) +
+  geom_line(aes(y = vol_mean_test),color = "red")+
+  geom_line(aes(y = vol_mean_train),color = "blue", linetype="twodash")+
+  geom_line(aes(y = pred1),color = "orange", linetype="twodash")+
+  geom_line(aes(y = mix_2),color = "black", linetype="twodash")
+```
+
+```{r}
+MSE2 <- vector()
+QLIKE2 <- vector()
+for (i in 1 : length(mix_2)) {
+  MSE2 <- c(MSE2,mean( vol_mean_test[i] - mix_2[i]) ^ 2)
+  QLIKE2 <- c(QLIKE2, mean(vol_mean_test[i]/ mix_2[i] - 
+                                 log(vol_mean_test[i]/ mix_2[i]) - 1))
+}
+```
+
+```{r}
+boxplot(MSE2, horizontal = TRUE)
+```
+
+```{r}
+boxplot(QLIKE2, horizontal = TRUE)
+```
