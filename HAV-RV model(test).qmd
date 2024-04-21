@@ -1,10 +1,6 @@
 ---
-title: "HAV-RV model(test)"
-format: 
-  html: 
-    embed-resources: true
-    code-fold: true
-    code-tools: true
+title: "Untitled"
+format: html
 editor: visual
 ---
 
@@ -12,15 +8,15 @@ editor: visual
 library(ggplot2)
 library(dplyr)
 library(rugarch)
-
-stock = read.csv("individual_book_train/stock_0.csv")
 ```
 
 ```{r}
-stock <- stock %>% mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1))
+stock <- read.csv("individual_book_train/stock_100.csv")
+stock <- stock %>% 
+  mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1))
 stock <- stock %>% mutate(BidAskSpread = ask_price1 / bid_price1 - 1)
 
-# Compute the log return of stock 0 over the first 500 unique time points.
+# Compute the log return of stock over the first 500 unique time points.
 log_r1 <- list()
 time_IDs <- unique(stock[, 1])[1:500]
 for (i in 1 : length(time_IDs)) {
@@ -35,8 +31,7 @@ for (i in 1 : length(time_IDs)) {
     log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
   }
 }
-
-# Divide the 10-minute period into non-overlapping 30-second intervals and use the list to store the volatility of stock 0 for each 30-second period in different time periods.
+# Divide the 10-minute period into non-overlapping 30-second intervals and use the list to store the volatility of stock for each 30-second period in different time periods.
 vol <- list()
 comp_vol <- function(x) {
   return(sqrt(sum(x ^ 2)))
@@ -48,25 +43,19 @@ for (i in 1 : length(log_r1)) {
 }
 
 
-# Use the first eight minutes of each 10-min time bucket for training data and the last two minutes for validation.
+
+# Use the first 5 minutes of each 10-min time bucket for training data and the last 5 minutes for validation.
 vol.train <- list()
 vol.val <- list()
 
 for (i in 1 : length(log_r1)) {
   vol.train[[i]] <- vol[[i]][1:16, ]
-  vol.val[[i]] <- vol[[i]][-(1:16), ]
+  vol.val[[i]] <- vol[[i]][-(1:11), ]
 }
-```
-
-```{r}
-# Use the first eight minutes of each 10-min time bucket for training data and the last two minutes for validation.
-# create a list length 500, where each element of the list is a data frame for a different time_id. All the data frames have three columns: the realised volatility and the corresponding realised volatility in the previous period and the mean realised volatility during the previous five periods. (The first row starts from the 6th time points for each 10-min time bucket because we need the mean realised volatility in the past 5 periods.)
 
 
-stock <- stock %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
-                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+
 len.train <- length(vol.train[[1]]$volatility)
-
 list.HAV <- list()
 
 for (i in 1 : length(vol)) {
@@ -79,7 +68,7 @@ for (i in 1 : length(vol)) {
                               mean_vol_5 = mean.vol)
 }
 
-# Fit the HAV model by using ordinary least squares (OLS) and weighted least squares (WLS), use two lists named HAV.ols.models and HAV.wls.models (each with length 500) to store all the models for every 10-min time bucket.
+# Fit the HAV model by using weighted least squares (WLS). For WLS, we use $w_t = \text{RV}_{t-1}/\sqrt{\text{RQ}_{t-1}}$ as the weight for each time period t.
 quar <- list()
 comp_quar <- function(x) {
   return(length(x) / 3 * sum(x ^ 4))
@@ -89,17 +78,50 @@ for (i in 1 : length(log_r1)) {
   colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
 }
 
-HAV.ols.models <- list()
 HAV.wls.models <- list()
 
 for (i in 1 : length(vol)) {
-  HAV.ols.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]])
-  
   # weight.HAV <- 0
   HAV.wls.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]],
                             weights = list.HAV[[i]]$vol_1 / 
                               sqrt(quar[[i]]$quarticity[5:(len.train - 1)]))
 }
 
+# HAV-RV performs well for some time buckets
 summary(HAV.wls.models[[218]])
+```
+
+```{r}
+pred.lm <- list()
+
+len.val <- length(vol.val[[1]]$volatility)
+list.HAV1 <- list()
+for (i in 1 : length(vol)) {
+  mean.vol <- rep(0, len.val - 5)
+  for (j in 1 : 5) {
+    mean.vol <- mean.vol + vol.val[[i]]$volatility[j : (j + len.val - 6)] / 5
+  }
+  list.HAV1[[i]] <- data.frame(vol = vol.val[[i]]$volatility[-(1:5)], 
+                              vol_1 = vol.val[[i]]$volatility[5:(len.val - 1)],
+                              mean_vol_5 = mean.vol)
+  pred.lm[[i]] <- predict(HAV.wls.models[[i]], newdata = list.HAV1[[i]])
+}
+```
+
+```{r}
+MSE.lm <- vector()
+for (i in 1 : length(vol)) {
+  MSE.lm <- c(MSE.lm, mean((tail(vol.val[[i]]$volatility, 4) - pred.lm[[i]]) ^ 2))
+}
+boxplot(MSE.lm, horizontal = TRUE)
+```
+
+```{r}
+rs <- vector()
+for (i in 1 : length(vol)) {
+  rs <- c(rs, summary(HAV.wls.models[[i]])$ r.squared)
+}
+boxplot(rs, horizontal = TRUE)
+mean_rs = mean(rs)
+mean_rs
 ```
