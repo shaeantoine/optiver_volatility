@@ -1,0 +1,146 @@
+---
+title: "mixture_training"
+output: html_document
+date: "2024-04-14"
+---
+
+# Required packages
+```{r}
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+library(stochvol)
+library(depmixS4)
+```
+
+
+# Reading in the data
+```{r}
+
+stock <- read.csv("~/Documents/DATA3888/optiver_volatility/data/individual_book_train/stock_100.csv")
+
+```
+
+
+# Data cleaning/ transformations
+```{r}
+
+stock <- stock %>%
+  mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1))
+
+stock <- stock %>%
+  mutate(BidAskSpread = ask_price1 / bid_price1 - 1)
+
+```
+
+```{r}
+
+log_r1 <- list()
+time_IDs <- unique(stock[, 1])[1:500]
+for (i in 1 : length(time_IDs)) {
+  sec <- stock %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- stock %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+    log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+  }
+}
+
+```
+
+
+```{r}
+
+vol <- list()
+
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+for (i in 1 : length(log_r1)) {
+  log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ceiling(time / 30))
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+}
+
+```
+
+```{r}
+ggplot(data = log_r1[[1]], aes(x = time, y = log_return)) + geom_line() 
+
+```
+
+```{r}
+ggplot(data = vol[[1]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
+```
+
+# Model Development - Stochastic Volatility
+
+```{r}
+spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+ARMA_GARCH.models <- list()
+
+for (i in 1 : length(vol)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r1[[i]] %>% 
+                                        filter(time <= 480) %>% pull(log_return),
+                                      solver = 'hybrid')
+
+}
+```
+
+```{r}
+
+RV.pred <- rep(0, length(vol))
+
+for (i in 1 : length(vol)) {
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 30, m.sim = 1000))
+  # Due to numerical issues, sometimes NA value can be produced 
+  # We simply replace NA value with 0; you may come up with a better idea in your own project
+  future.path[is.na(future.path)] <- 0 
+  RV.pred[i] <- mean(sqrt(colSums(future.path ^ 2)))
+}
+
+```
+
+
+# Evaluation 
+```{r}
+list.reg.val <- list()
+len.val <- length(vol.val[[1]]$volatility)
+pred.lm <- list()
+
+for (i in 1 : length(vol)) {
+  stats.bucket <- stock1 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket))
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg.val[[i]] <- 
+    data.frame(volatility = vol.val[[i]]$volatility, 
+               price = mean.price$WAP[len.train:(len.train + len.val - 1)],
+               order = mean.order$num_order[len.train:(len.train + len.val - 1)],
+               BidAskSpread = mean.BAS$BidAskSpread[len.train:(len.train + len.val - 1)])
+  pred.lm[[i]] <- predict(lm.models[[i]], newdata = list.reg.val[[i]])
+}
+```
+
+
+
+
+
+
+
+
+
+
+
