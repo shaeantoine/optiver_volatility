@@ -80,6 +80,49 @@ ggplot(data = vol[[1]], aes(x = time_bucket, y = volatility)) + geom_line() + ge
 
 # Model Development - Stochastic Volatility
 
+# HAV-RV
+```{r}
+list.HAV <- list()
+
+for (i in 1 : length(vol)) {
+  mean.vol <- rep(0, len.train - 5)
+  for (j in 1 : 5) {
+    mean.vol <- mean.vol + vol.train[[i]]$volatility[j : (j + len.train - 6)] / 5
+  }
+  list.HAV[[i]] <- data.frame(vol = vol.train[[i]]$volatility[-(1:5)], 
+                              vol_1 = vol.train[[i]]$volatility[5:(len.train - 1)],
+                              mean_vol_5 = mean.vol)
+}
+```
+
+```{r}
+quar <- list()
+comp_quar <- function(x) {
+  return(length(x) / 3 * sum(x ^ 4))
+}
+for (i in 1 : length(log_r1)) {
+  quar[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_quar)
+  colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
+}
+
+HAV.ols.models <- list()
+HAV.wls.models <- list()
+
+for (i in 1 : length(vol)) {
+  HAV.ols.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]])
+  
+  # weight.HAV <- 0
+  HAV.wls.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]],
+                            weights = list.HAV[[i]]$vol_1 / 
+                              sqrt(quar[[i]]$quarticity[5:(len.train - 1)]))
+}
+
+# HAV-RV performs well for some time buckets
+summary(HAV.wls.models[[218]])
+```
+
+
+# ARMA-GARCH
 ```{r}
 spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)), 
                    mean.model = list(armaOrder = c(1, 1)), 
