@@ -11,6 +11,7 @@ library(dplyr)
 library(rugarch)
 library(stochvol)
 library(depmixS4)
+library(tsDyn) 
 ```
 
 
@@ -78,7 +79,44 @@ ggplot(data = log_r1[[1]], aes(x = time, y = log_return)) + geom_line()
 ggplot(data = vol[[1]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
 ```
 
-# Model Development - Stochastic Volatility
+# EDA and Aasumption Testing
+
+# Stationary - Augmented Dickey-Fuller (ADF) test
+```{r}
+adf_test_result <- adf.test(log_r1[[1]]$log_return)
+
+print(adf_test_result)
+```
+
+
+# Ljung-Box test 
+```{r}
+model <- arima(log_r1[[1]]$log_return, order=c(1,0,0))
+
+# Step 5: Perform Ljung-Box test on the residuals
+# Change lag value 'k' as per your requirement
+box_test <- Box.test(model$residuals, lag = 20, type = "Ljung-Box")
+
+# Print the results
+print(box_test)
+```
+
+# Portmanteau test
+```{r}
+
+
+
+```
+
+
+#
+```{r}
+
+```
+
+
+
+# Model Development 
 
 # Regression
 ```{r}
@@ -269,12 +307,16 @@ for (i in 1 : length(vol)) {
                                  log(vol.val[[i]]$volatility / RV.pred[[i]]) - 1))
 }
 
-boxplot(MSE.lm, horizontal = TRUE)
+max_index <- which.max(MSE.lm)
+
+MSE.lm_filtered <- MSE.lm[-max_index]
+
+boxplot(MSE.lm_filtered, horizontal = TRUE, main = "MSE")
 ```
 
 
 ```{r}
-boxplot(QLIKE.lm, horizontal = TRUE)
+boxplot(QLIKE.lm, horizontal = TRUE, main = "QLIKE")
 ```
 
 
