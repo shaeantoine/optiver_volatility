@@ -80,6 +80,52 @@ ggplot(data = vol[[1]], aes(x = time_bucket, y = volatility)) + geom_line() + ge
 
 # Model Development - Stochastic Volatility
 
+# Regression
+```{r}
+vol.train <- list()
+vol.val <- list()
+
+for (i in 1 : length(log_r1)) {
+  vol.train[[i]] <- vol[[i]][1:16, ]
+  vol.val[[i]] <- vol[[i]][-(1:16), ]
+}
+```
+
+```{r}
+list.reg <- list() # list for regression
+stock <- stock %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train <- length(vol.train[[1]]$volatility)
+
+for (i in 1 : length(vol)) {
+  stats.bucket <- stock %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    dplyr::select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  # for each 30-sec time bucket, we compute the following statistics
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg[[i]] <- data.frame(volatility = vol.train[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train - 1)],
+                              order = mean.order$num_order[1:(len.train - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
+}
+```
+
+
+```{r}
+lm.models <- list()
+
+for (i in 1 : length(vol)) {
+  lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg[[i]],
+                       weights = 0.8 ^ (((len.train - 2):0) / 2))
+}
+
+# for some periods, linear regression performs well
+summary(lm.models[[162]])
+```
+
+
 # HAV-RV
 ```{r}
 list.HAV <- list()
@@ -156,6 +202,8 @@ for (i in 1 : length(vol)) {
 
 
 # Evaluation 
+
+# Linear Regression Evaluation
 ```{r}
 list.reg.val <- list()
 len.val <- length(vol.val[[1]]$volatility)
@@ -177,6 +225,39 @@ for (i in 1 : length(vol)) {
 }
 ```
 
+# HAV-RV Evaluation 
+```{r}
+
+```
+
+
+# ARMA-GARCH Evaluation
+```{r}
+vol.train <- list()
+vol.val <- list()
+
+for (i in 1 : length(log_r1)) {
+  vol.train[[i]] <- vol[[i]][1:16, ]
+  vol.val[[i]] <- vol[[i]][-(1:16), ]
+}
+
+vol_mean_test <- vector()
+vol_mean_train <- vector()
+for (i in 1 : length(vol)){
+  vol_mean_test <- c(vol_mean_test, mean(vol.val[[i]]$volatility))
+  vol_mean_train <- c(vol_mean_train, mean(vol.train[[i]]$volatility))
+}
+```
+
+```{r}
+time_slot <- c(1 : length(vol))
+df = data.frame(time_slot, vol_mean_test, RV.pred)
+
+
+ggplot(tail(df,n = 50), aes(x=time_slot))+
+  geom_line(aes(y = vol_mean_test),color = "red")+
+  geom_line(aes(y = RV.pred),color = "blue", linetype="twodash")
+```
 
 
 
