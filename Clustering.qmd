@@ -1,0 +1,102 @@
+---
+title: "Clustering"
+format:
+  html:
+    toc: true
+    embed-resources: true
+    self-contained-math: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+### Load data
+
+```{r}
+dir.short <- "data/individual_book_train"
+all.files.short <- list.files(dir.short)
+
+df_cl = data.frame(name = character(),
+                   mean_BAS = numeric(),
+                   var_BAS = numeric(),
+                   price_diff = numeric(),
+                   stringsAsFactors = FALSE)
+
+for (i in all.files.short) {
+  stock = read.csv(file.path(dir.short, i))
+  stock = stock |> mutate(BidAskSpread = ask_price1 / bid_price1 - 1)
+  
+  file_name = gsub("stock_", "", (gsub(".csv", "", i)))
+  mean_BAS = mean(stock$BidAskSpread)
+  var_BAS = var(stock$BidAskSpread)
+  price_diff = mean(abs(stock$ask_price1 - stock$bid_price1))
+  
+  print(file_name)
+  
+  df_cl = rbind(df_cl, list(file_name, mean_BAS, var_BAS, price_diff))
+}
+```
+
+## Apply clustering
+
+```{r}
+colnames(df_cl) = c("name", "mean_BAS", "var_BAS", "price_diff")
+
+df_cl$name = as.numeric(df_cl$name)
+df_cl = df_cl[order(df_cl$name),]
+row.names(df_cl) = df_cl$name
+
+df_cl = df_cl |>
+    select(-var_BAS)
+```
+
+### Find optimal k - skree plot
+
+```{r}
+# Initialize total within sum of squares error: wss
+wss <- 0
+
+# For 1 to 15 cluster centers
+for (i in 1:15) {
+  km.out <- kmeans(df_cl[-1], centers = i, nstart = 20)
+  # Save total within sum of squares to wss variable
+  wss[i] <- km.out$tot.withinss
+}
+
+# Plot total within sum of squares vs. number of clusters
+plot(1:15, wss, type = "b", 
+     xlab = "Number of Clusters", 
+     ylab = "Within groups sum of squares")
+
+# Set k equal to the number of clusters corresponding to the elbow location
+k <- 4
+```
+
+### Cluster with k = 4
+
+```{r}
+km.out <- kmeans(df_cl[-1], centers = 4, nstart = 20)
+
+df = data.frame(
+    names = row.names(df_cl),
+    mean_BAS = df_cl$mean_BAS,
+    price_diff = df_cl$price_diff,
+    cluster = factor(km.out$cluster)
+)
+
+plot = ggplot(df, aes(x = mean_BAS, y = price_diff, color = cluster, label = names)) + 
+  geom_point() + 
+  geom_text(aes(label=names), vjust = -1, hjust = 1) +
+  theme_minimal() +
+  labs(title = "Cluster Plot", x = "mean_BAS", y = "price_diff")
+
+library(plotly)
+ggplotly(plot)
+```
+
+
