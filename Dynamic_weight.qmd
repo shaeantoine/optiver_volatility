@@ -1,0 +1,539 @@
+---
+title: "Dynamic_weight"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    df-print: paged
+    table-of-contents: true
+---
+
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+```
+
+# Time 30 sec weight change bucket (using MSE)
+
+# time split for garch
+
+model = eGarch (1,1) and lm
+
+for 600 minute
+
+80% train ( first 480 sec ) 20%test (120 sec)
+
+80% train - 75% model train (450 sec)
+
+ - 5% get initial weight(30 sec)
+
+```{r}
+stock <- read.csv("data/individual_book_train/stock_100.csv")
+```
+
+test on 1 stock & first 5 (10 minute) time period
+
+```{r}
+stock <- stock %>% mutate(
+  WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)
+  )
+
+stock <- stock %>% mutate(
+  BidAskSpread = ask_price1 / bid_price1 - 1
+  )
+
+log_rs <- list()
+#time_IDs <- unique(stock$time_id)
+time_IDs <- unique(stock[, 1])[1:5]
+
+
+for (i in 1 : length(time_IDs)) {
+  sec <- stock %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- stock %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_rs[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_rs[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_rs[[i]] <- rbind(log_rs[[i]], new.df)
+    log_rs[[i]] <- log_rs[[i]][order(log_rs[[i]]$time), ]
+  }
+}
+vol <- list()
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+for (i in 1 : length(log_rs)) {
+  log_rs[[i]] <- log_rs[[i]] %>% mutate(time_bucket = ceiling(time / 30))
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_rs[[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+}
+```
+
+## eGarch set up
+
+filter time 450 for first 75% train
+
+```{r}
+spec <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(0, 0)), 
+                   distribution.model = "norm")
+ARMA_GARCH.models <- list()
+
+# filter time 450 for first 75% train
+for (i in 1 : length(vol)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_rs[[i]] %>% 
+                                        filter(time <= 450) %>% pull(log_return),
+                                      solver = 'hybrid')
+  }
+```
+
+n.sim = 150 for 150 second
+
+n_w = 30 for first 30 second used to calculate MSE for initial weight
+
+n_p = 120 for the real prediction
+
+# aaa
+
+```{r,warning=FALSE,message=FALSE}
+n_w = 30 # first 30 second
+n_p = 120 # latter 120 second
+
+pred1 <- list()
+weight_train <- list()
+for (i in 1 : length(vol)) {
+  
+  fitted <- rep(1,n_w)
+  weight_train[[i]] <- data_frame(fitted)
+  fitted <- rep(1,n_p)
+  pred1[[i]] <- data_frame(fitted)
+  
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 150, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0
+
+  for(j in 1: nrow(future.path)) {
+    if (j <= n_w){
+      weight_train[[i]]$fitted[j] <- mean(sqrt(mean(future.path[j,] ^ 2)))
+    }else{
+      pred1[[i]]$fitted[j-n_w] <- mean(sqrt(mean(future.path[j,] ^ 2)))
+    }
+  }
+}
+
+garch_weight <- vector()
+for (i in 1:length(vol)){
+  garch_weight[i] <- mean(weight_train[[i]]$fitted)
+}
+
+garch_weight
+```
+
+## adjust time into time bucket
+
+```{r}
+pred1_adjust <- list()
+
+for(i in 1:length(vol)){
+  fitted <- rep(1:4)
+  pred1_adjust[[i]] <- data_frame(fitted)
+  pred1_adjust[[i]]$fitted[1] <- mean(pred1[[1]]$fitted[1:30])
+  pred1_adjust[[i]]$fitted[2] <- mean(pred1[[1]]$fitted[31:60])
+  pred1_adjust[[i]]$fitted[3] <- mean(pred1[[1]]$fitted[61:91])
+  pred1_adjust[[i]]$fitted[4] <- mean(pred1[[1]]$fitted[91:120])
+}
+pred1_adjust[[1]]
+```
+
+## regression set up
+
+# time split for lm
+
+3 split (where each number = 30 second)
+
+:train = 1:15 (0-450 sec)
+
+:weight train = 16 (450-480)
+
+:test = 17 : 20 (480-600)
+
+```{r}
+vol.train <- list()
+vol.val <- list()
+vol.w <- list()
+
+for (i in 1 : length(log_rs)) {
+  vol.train[[i]] <- vol[[i]][1:15, ]
+  vol.w[[i]] <- vol[[i]][16,]
+  vol.val[[i]] <- vol[[i]][-(1:16), ]
+}
+
+list.reg <- list()
+stocklm <- stock %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train <- length(vol.train[[1]]$volatility)
+
+for (i in 1 : length(vol)) {
+  stats.bucket <- stocklm %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg[[i]] <- data.frame(volatility = vol.train[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train - 1)],
+                              order = mean.order$num_order[1:(len.train - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
+}
+
+lm.models <- list()
+
+for (i in 1 : length(vol)) {
+  lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg[[i]],
+                       weights = 0.8 ^ (((len.train - 2):0) / 2))
+}
+
+```
+
+get prediction and split 16 for weight
+
+```{r}
+pred2 <- list()
+lm_weight <- vector()
+
+for (i in 1: length(vol)) {
+  fitted <- rep(1,4)
+  pred2[[i]] <- data_frame(fitted)
+  
+  lm_weight[i] <- lm.models[[i]]$fitted.values[1]
+  
+  for(j in 1:4){
+    pred2[[i]]$fitted[j] <- lm.models[[i]]$fitted.values[j+1]
+  }
+}
+
+lm_weight
+```
+
+## get initial weight base on MSE
+
+make 10 mix model base on difference (a,b) where a increase by 0.1 and b decrease by 0.1
+
+then find the model with the best MSE and use that as an initial weight
+
+```{r}
+mix_weight <- list()
+
+for(i in 1:length(vol)){
+  mix <- rep(1,11)
+  mse <- rep(1,11)
+  aa <- rep(1,11)
+  mix_weight[[i]] <- data_frame(mix,mse,aa)
+  a = 0.0
+  b = 1.0
+  for(j in 1:11){
+    mix_weight[[i]]$mix[j] <- (a*garch_weight[i] + b*lm_weight[i])
+    mix_weight[[i]]$mse[j] <- mean(vol.w[[i]]$volatility - mix_weight[[i]]$mix[j])^2
+    mix_weight[[i]]$aa[j] <- a
+    a <- a + 0.1
+    b <- b - 0.1
+  }
+}
+
+mix_weight[[1]]
+```
+
+Compare MSE and get initial weight for each time period
+
+```{r}
+ini_a <- vector()
+for(i in 1:length(vol)){
+  select <- mix_weight[[i]][which.min(mix_weight[[i]]$mse),]
+  ini_a <- append(ini_a,select$aa)
+}
+ini_a
+```
+
+## making dynamic weight model
+
+The idea is to use the weight (a,b), from a mix with the least MSE of last period ,for current period.
+
+meaning weight will adjust with 1 period lag
+
+```{r}
+result_pred <- list()
+
+for(i in 1:length(vol)){
+  pred <- rep(1,4)
+  result_pred[[i]] <- data_frame(pred)
+  a <- ini_a[i]
+  b <- 1 - a
+  result_pred[[i]]$pred[1] <- (a*pred1_adjust[[i]]$fitted[1] + b*pred2[[1]]$fitted[1])
+}
+
+result_pred[[1]]
+```
+
+calculating weight for the remaining period
+
+```{r}
+final_a <- list()
+
+rep = 3 #for last n period
+for(r in 1:rep){
+  al <- rep(1,length(vol))
+  final_a[[r]] <- data_frame(al)
+  
+  mix_weight <- list()
+  for(i in 1:length(vol)){
+    mix <- rep(1,11)
+    mse <- rep(1,11)
+    aa <- rep(1,11)
+    mix_weight[[i]] <- data_frame(mix,mse,aa)
+    a = 0.0
+    b = 1.0
+    for(j in 1:11){
+      mix_weight[[i]]$mix[j] <- (a*pred1_adjust[[i]]$fitted[r] + b*pred2[[i]]$fitted[r])
+      mix_weight[[i]]$mse[j] <- mean(vol.val[[i]]$volatility[r] - mix_weight[[i]]$mix[j])^2
+      mix_weight[[i]]$aa[j] <- a
+      a <- a + 0.1
+      b <- b - 0.1
+    }
+  }
+  result_a <- vector()
+  for(i in 1:length(vol)){
+    select <- mix_weight[[i]][which.min(mix_weight[[i]]$mse),]
+    result_a <- append(result_a,select$aa)
+  }
+  final_a[[r]]$al <- result_a
+}
+
+final_a[[rep]]$al
+```
+
+get the rest of the prediction
+
+```{r}
+rep <- 3
+for(i in 1:length(vol)){
+  for(r in 1:rep){
+    a <- final_a[[r]]$al[i]
+    b <- 1 - a
+    result_pred[[i]]$pred[[r+1]] <-(a*pred1_adjust[[i]]$fitted[r+1] + b*pred2[[i]]$fitted[r+1])
+  }
+}
+
+result_pred[[1]]
+```
+
+# result evaluation/visualisation
+
+## MSE/Qlike
+
+```{r}
+MSE_mix <- vector()
+QLIKE_mix <- vector()
+for (i in 1 : length(vol.val)) {
+  MSE_mix <- c(MSE_mix,mean( vol.val[[i]]$volatility - result_pred[[i]]$pred) ^ 2)
+  QLIKE_mix <- c(QLIKE_mix, mean(vol.val[[i]]$volatility/ result_pred[[i]]$pred - 
+                                 log(vol.val[[i]]$volatility/ result_pred[[i]]$pred) - 1))
+}
+```
+
+```{r}
+boxplot(MSE_mix, horizontal = TRUE)
+```
+
+```{r}
+boxplot(QLIKE_mix, horizontal = TRUE)
+```
+
+### compare with lm
+
+```{r}
+MSE_lm <- vector()
+QLIKE_lm <- vector()
+for (i in 1 : length(vol.val)) {
+  MSE_lm <- c(MSE_lm,mean( vol.val[[i]]$volatility - pred2[[i]]$fitted) ^ 2)
+  QLIKE_lm <- c(QLIKE_lm, mean(vol.val[[i]]$volatility/ pred2[[i]]$fitted - 
+                                 log(vol.val[[i]]$volatility/ pred2[[i]]$fitted) - 1))
+}
+
+```
+
+```{r}
+boxplot(MSE_lm, horizontal = TRUE)
+```
+
+```{r}
+boxplot(QLIKE_lm, horizontal = TRUE)
+```
+
+### mean compare
+
+```{r}
+mean(MSE_mix)
+mean(MSE_lm)
+```
+
+```{r}
+mean(QLIKE_mix)
+mean(QLIKE_lm)
+```
+
+## period 1
+
+result = last 120 second
+
+each time = 30 second (17 = 1-30,...,20 = 91-120)
+
+### table
+
+```{r}
+time_pres <- c(17:20)
+df1 = data.frame(time_pres,result_pred[[1]]$pred,vol.val[[1]]$volatility
+                ,pred1_adjust[[1]]$fitted,pred2[[1]]$fitted)
+colnames(df1) <- c('time_period','mix_result','test_vol','egarch','lm')
+df1
+```
+
+### visual
+
+red = real test volume
+
+blue = mix model result
+
+orange = model 1
+
+black = model 2
+
+```{r}
+ggplot(df1, aes(x=time_period)) +
+  geom_line(aes(y = test_vol),color = "red")+
+  geom_line(aes(y = mix_result),color = "blue", linetype="twodash")+
+  geom_line(aes(y = egarch),color = "orange", linetype="twodash")+
+  geom_line(aes(y = lm),color = "black", linetype="twodash")
+```
+
+## period 2
+
+### table
+
+```{r}
+df2 = data.frame(time_pres,result_pred[[2]]$pred,vol.val[[2]]$volatility
+                ,pred1_adjust[[2]]$fitted,pred2[[2]]$fitted)
+colnames(df2) <- c('time_period','mix_result','test_vol','egarch','lm')
+df2
+```
+
+### visual
+
+red = real test volume
+
+blue = mix model result
+
+orange = model 1
+
+black = model 2
+
+```{r}
+ggplot(df2, aes(x=time_period)) +
+  geom_line(aes(y = test_vol),color = "red")+
+  geom_line(aes(y = mix_result),color = "blue", linetype="twodash")+
+  geom_line(aes(y = egarch),color = "orange", linetype="twodash")+
+  geom_line(aes(y = lm),color = "black", linetype="twodash")
+
+
+```
+
+## period 3
+
+### table
+
+```{r}
+df3 = data.frame(time_pres,result_pred[[3]]$pred,vol.val[[3]]$volatility
+                ,pred1_adjust[[3]]$fitted,pred2[[3]]$fitted)
+colnames(df3) <- c('time_period','mix_result','test_vol','egarch','lm')
+df3
+```
+
+### visual
+
+red = real test volume
+
+blue = mix model result
+
+orange = model 1
+
+black = model 2
+
+```{r}
+ggplot(df3, aes(x=time_period)) +
+  geom_line(aes(y = test_vol),color = "red")+
+  geom_line(aes(y = mix_result),color = "blue", linetype="twodash")+
+  geom_line(aes(y = egarch),color = "orange", linetype="twodash")+
+  geom_line(aes(y = lm),color = "black", linetype="twodash")
+```
+
+## period 4
+
+### table
+
+```{r}
+df4 = data.frame(time_pres,result_pred[[4]]$pred,vol.val[[4]]$volatility
+                ,pred1_adjust[[4]]$fitted,pred2[[4]]$fitted)
+colnames(df4) <- c('time_period','mix_result','test_vol','egarch','lm')
+df4
+```
+
+### visual
+
+red = real test volume
+
+blue = mix model result
+
+orange = model 1
+
+black = model 2period 5
+
+```{r}
+ggplot(df4, aes(x=time_period)) +
+  geom_line(aes(y = test_vol),color = "red")+
+  geom_line(aes(y = mix_result),color = "blue", linetype="twodash")+
+  geom_line(aes(y = egarch),color = "orange", linetype="twodash")+
+  geom_line(aes(y = lm),color = "black", linetype="twodash")
+```
+
+### table
+
+```{r}
+df5 = data.frame(time_pres,result_pred[[5]]$pred,vol.val[[5]]$volatility
+                ,pred1_adjust[[5]]$fitted,pred2[[5]]$fitted)
+colnames(df5) <- c('time_period','mix_result','test_vol','egarch','lm')
+df5
+```
+
+### visual
+
+red = real test volume
+
+blue = mix model result
+
+orange = model 1
+
+black = model 2
+
+```{r}
+ggplot(df5, aes(x=time_period)) +
+  geom_line(aes(y = test_vol),color = "red")+
+  geom_line(aes(y = mix_result),color = "blue", linetype="twodash")+
+  geom_line(aes(y = egarch),color = "orange", linetype="twodash")+
+  geom_line(aes(y = lm),color = "black", linetype="twodash")
+```
