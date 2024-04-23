@@ -1,0 +1,381 @@
+---
+title: "clustering_experiment"
+output: html_document
+date: "2024-04-21"
+---
+
+```{r}
+library(dplyr)
+```
+
+
+# Load Stock 1 and 2
+```{r}
+
+stock1 <- read.csv("~/Documents/DATA3888/optiver_volatility/data/individual_book_train/stock_1.csv")
+stock2 <- read.csv("~/Documents/DATA3888/optiver_volatility/data/individual_book_train/stock_2.csv")
+
+```
+
+# Count total orders of stock1 and stock2
+```{r}
+
+stock1 <- stock1 %>% mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+stock2 <- stock2 %>% mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+
+volume1 <- sum(stock1$num_order)
+volume2 <- sum(stock2$num_order)
+
+```
+
+# Load all stocks
+```{r}
+
+dir_stocks <- "~/Documents/DATA3888/optiver_volatility/data/individual_book_train/"
+all_stocks <- list.files(dir_stocks) # CHANGE
+five_stocks <- sample(all_stocks, 5)
+
+
+stock_files_list <- list()
+for (i in five_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+```
+
+# Produce Num Order, WAP and Bid Ask Spread
+```{r}
+
+for (i in 1 : length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>% 
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(BidAskSpread = ask_price1 / bid_price1 - 1) %>%
+    mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+}
+
+```
+
+# Produce basic Volume calculation
+```{r}
+
+volume_list <- list()
+for (i in 1 : length(stock_files_list)) {
+  volume <- sum(stock_files_list[[i]]$num_order)
+  volume_list[i] <- volume
+}
+
+volume_list <- unlist(volume_list)
+boxplot(volume_list)
+
+```
+
+
+# Log returns for each stock
+# stock_returns_list is a nested list which holds for each stock each 10 minute time buckets' returns (500 per 10 minute bucket) 
+```{r}
+
+stock_returns_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  log_r1 <- list() # This likely needs to change significantly 
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (i in 1 : length(time_IDs)) {
+    sec <- stock_files_list[[j]] %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+    price <- stock_files_list[[j]] %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+    log_r <- log(price[-1] / price[1:(length(price) - 1)])
+    log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+    time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+    if (length(time.no.change) > 0) {
+      new.df <- data.frame(time = time.no.change, log_return = 0)
+      log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+      log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+    }
+  }
+  stock_returns_list[[j]] <- log_r1 
+}
+
+```
+
+
+# Volatility
+```{r}
+
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+stock_volatility_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  vol <- list()
+  for (i in 1 : length(stock_returns_list[[j]])) {
+    stock_returns_list[[j]][[i]] <- stock_returns_list[[j]][[i]] %>% mutate(time_bucket = ceiling(time / 30))
+    vol[[i]] <- aggregate(log_return ~ time_bucket, data = stock_returns_list[[j]][[i]], FUN = comp_vol)
+    colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  
+  stock_volatility_list[[j]] <- vol
+}
+
+# The following code prints the volatility for the first stock's first 10 minute time bucket 
+stock_volatility_list[[1]][[1]]
+
+```
+
+
+# WLR for multiple stocks
+
+# The idea here is to generate 80% of each of the 10 minute buckets for each stock into training data
+# How do I store the training and validation data for each of the stocks? 
+```{r}
+
+stock_train_val <- list()
+
+for (j in 1 : length(stock_files_list)) {
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1 : length(stock_returns_list[[j]])) {
+    vol.train[[i]] <- stock_volatility_list[[j]][[i]][1:16, ]
+    vol.val[[i]] <- stock_volatility_list[[j]][[i]][-(1:16), ]
+  }
+  
+  stock_train_val[[j]] <- list(train = vol.train, val = vol.val)
+
+}
+
+stock_train_val[[1]]$train[[400]]$volatility
+  
+```
+
+
+```{r}
+
+# list.reg <- list() # list for regression
+# stock <- stock %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+#                             num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+# len.train <- length(vol.train[[1]]$volatility)
+# 
+# for (i in 1 : length(vol)) {
+#   stats.bucket <- stock %>% 
+#     filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+#     dplyr::select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+#   # for each 30-sec time bucket, we compute the following statistics
+#   mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+#   mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+#   mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+#   list.reg[[i]] <- data.frame(volatility = vol.train[[i]]$volatility[-1], 
+#                               price = mean.price$WAP[1:(len.train - 1)],
+#                               order = mean.order$num_order[1:(len.train - 1)],
+#                               BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
+# }
+# 
+# # Updates ordering
+# 
+# ##########
+# vol = stock_volatility_list[[j]]
+# stock = stock_files_list[[i]]
+# vol.train[[1]] = stock_train_val[[j]]$train[[1]]
+# ##########
+
+stock_wlr_train <- list()
+
+for (j in 1 : length(stock_files_list)) {
+  
+  list.reg <- list() 
+  stock_files_list[[j]] <- stock_files_list[[j]] %>% 
+                           mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                                  num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+  len.train <- length(stock_train_val[[j]]$train[[1]]$volatility)
+  
+   for (i in 1 : length(stock_volatility_list[[j]])) {
+    stats.bucket <- stock_files_list[[j]] %>% 
+                    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+                    dplyr::select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+    
+    # for each 30-sec time bucket, we compute the following statistics
+    mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+    
+    list.reg[[i]] <- data.frame(volatility = stock_train_val[[j]]$train[[i]]$volatility[-1], 
+                                price = mean.price$WAP[1:(len.train - 1)],
+                                order = mean.order$num_order[1:(len.train - 1)],
+                                BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
+   }
+  
+  stock_wlr_train[[j]] <- list.reg
+  
+}
+
+# Selecting the training data of the 500th 10 minute interval of the 5th stock
+stock_wlr_train[[5]][[500]]
+
+```
+
+
+```{r}
+# Single stock computation 
+# lm.models <- list()
+# 
+# for (i in 1 : length(vol)) {
+#   lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg[[i]],
+#                        weights = 0.8 ^ (((len.train - 2):0) / 2))
+# }
+# 
+# # for some periods, linear regression performs well
+# summary(lm.models[[162]])
+# 
+# 
+# ##########
+# vol = stock_volatility_list[[j]]
+# stock = stock_files_list[[i]]
+# vol.train[[1]] = stock_train_val[[j]]$train[[1]]
+# list.reg[[i]] = stock_wlr_train[[j]][[i]]
+##########
+
+# Multiple stock computation
+wlr_model_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  lm.models <- list()
+  
+  for (i in 1 : length(stock_volatility_list[[j]])) {
+    lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, stock_wlr_train[[j]][[i]],
+                         weights = 0.8 ^ (((len.train - 2):0) / 2))
+  }
+  
+  wlr_model_list[[j]] <- lm.models
+
+}
+
+# Summary of the WLR model for stock 4 on the 30th 10 minute time bucket
+summary(wlr_model_list[[4]][[30]])
+
+```
+
+# WLR Model Evaluation on Multiple stocks
+
+```{r}
+
+# # Single stock reference
+# list.reg.val <- list()
+# len.val <- length(vol.val[[1]]$volatility)
+# pred.lm <- list()
+# 
+# for (i in 1 : length(vol)) {
+#   stats.bucket <- stock1 %>% 
+#     filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+#     select(c(BidAskSpread, WAP, num_order, time_bucket))
+#   mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+#   mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+#   mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+#   list.reg.val[[i]] <- 
+#     data.frame(volatility = vol.val[[i]]$volatility, 
+#                price = mean.price$WAP[len.train:(len.train + len.val - 1)],
+#                order = mean.order$num_order[len.train:(len.train + len.val - 1)],
+#                BidAskSpread = mean.BAS$BidAskSpread[len.train:(len.train + len.val - 1)])
+#   pred.lm[[i]] <- predict(lm.models[[i]], newdata = list.reg.val[[i]])
+# }
+# 
+# ##########
+# vol = stock_volatility_list[[j]]
+# stock = stock_files_list[[i]]
+# vol.train[[1]] = stock_train_val[[j]]$train[[1]]
+# vol.val[[1]] = stock_train_val[[j]]$val[[1]]
+# list.reg[[i]] = stock_wlr_train[[j]][[i]]
+# ##########
+
+
+# Multiple stock implementation 
+stock_vol_pred <- list()
+for (j in 1 : length(stock_files_list)) {
+  list.reg.val <- list()
+  len.val <- length(stock_train_val[[j]]$val[[1]]$volatility)
+  pred.lm <- list()
+  
+  for (i in 1 : length(stock_volatility_list[[j]])) {
+    stats.bucket <- stock_files_list[[j]] %>% 
+                    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+                    dplyr::select(c(BidAskSpread, WAP, num_order, time_bucket))
+    
+    mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+    
+    list.reg.val[[i]] <- data.frame(volatility = stock_train_val[[j]]$val[[i]]$volatility, 
+                                    price = mean.price$WAP[len.train:(len.train + len.val - 1)],
+                                    order = mean.order$num_order[len.train:(len.train + len.val - 1)],
+                                    BidAskSpread = mean.BAS$BidAskSpread[len.train:(len.train + len.val - 1)])
+    
+    pred.lm[[i]] <- predict(wlr_model_list[[j]][[i]], newdata = list.reg.val[[i]])
+  }
+  
+  stock_vol_pred[[j]] <- pred.lm
+  
+}
+
+# This is the volatility prediction of the last 4 30 second intervals of the 400th 10 minute bucket for the first stock
+stock_vol_pred[[1]][[400]]
+```
+
+# MSE and QLIKE Plots 
+```{r warning = FALSE}
+
+# # Single stock reference
+# MSE.lm <- vector()
+# QLIKE.lm <- vector()
+# for (i in 1 : length(vol)) {
+#   MSE.lm <- c(MSE.lm, mean((vol.val[[i]]$volatility - pred.lm[[i]]) ^ 2))
+#   QLIKE.lm <- c(QLIKE.lm, mean(vol.val[[i]]$volatility / pred.lm[[i]] - 
+#                                  log(vol.val[[i]]$volatility / pred.lm[[i]]) - 1))
+# }
+# 
+# boxplot(MSE.lm, horizontal = TRUE)
+# boxplot(QLIKE.lm, horizontal = TRUE)
+# 
+# # ##########
+# # vol = stock_volatility_list[[j]]
+# # stock = stock_files_list[[i]]
+# # vol.train[[1]] = stock_train_val[[j]]$train[[1]]
+# # vol.val[[1]] = stock_train_val[[j]]$val[[1]]
+# # list.reg[[i]] = stock_wlr_train[[j]][[i]]
+# # ##########
+
+
+# Multiple stock implementation
+MSE_all <- list()
+for (j in 1 : length((stock_files_list))) {
+  MSE.lm <- vector()
+  for (i in 1 : length(stock_volatility_list[[j]])) {
+    MSE.lm <- c(MSE.lm, mean((stock_train_val[[j]]$val[[i]]$volatility - stock_vol_pred[[j]][[i]]) ^ 2))
+  }
+  MSE_all[[j]] <- MSE.lm
+}
+
+boxplot(MSE_all, horizontal = TRUE, main = "MSE for all stocks", names = paste("Stock", 1:length(stock_files_list)), ylim = c(0,0.000015))
+
+```
+
+```{r warning = FALSE}
+
+# Multiple stock implementation
+QLIKE_all <- list()
+for (j in 1 : length((stock_files_list))) {
+  QLIKE.lm <- vector()
+  for (i in 1 : length(stock_volatility_list[[j]])) {
+    QLIKE.lm <- c(QLIKE.lm, mean(stock_train_val[[j]]$val[[i]]$volatility / stock_vol_pred[[j]][[i]] - 
+                                   log(stock_train_val[[j]]$val[[i]]$volatility / stock_vol_pred[[j]][[i]]) - 1))
+  }
+  QLIKE_all[[j]] <- QLIKE.lm
+  #boxplot(QLIKE.lm, horizontal = TRUE, main = paste("Stock", j, "QLIKE"))
+}
+
+boxplot(QLIKE_all, horizontal = TRUE, main = "QLIKE for all stocks", names = paste("Stock", 1:length(stock_files_list)), ylim = c(0,5))
+
+```
+
+
+
+
+
+
+
+

@@ -251,6 +251,7 @@ for (i in 1 : length(vol)) {
                BidAskSpread = mean.BAS$BidAskSpread[len.train:(len.train + len.val - 1)])
   pred.lm[[i]] <- predict(lm.models[[i]], newdata = list.reg.val[[i]])
 }
+
 ```
 
 # HAV-RV Evaluation 
