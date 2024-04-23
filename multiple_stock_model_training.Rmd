@@ -125,6 +125,8 @@ stock_volatility_list[[1]][[1]]
 # How do I store the training and validation data for each of the stocks? 
 ```{r}
 
+stock_train_val <- list()
+
 for (j in 1 : length(stock_files_list)) {
   vol.train <- list()
   vol.val <- list()
@@ -133,7 +135,12 @@ for (j in 1 : length(stock_files_list)) {
     vol.train[[i]] <- stock_volatility_list[[j]][[i]][1:16, ]
     vol.val[[i]] <- stock_volatility_list[[j]][[i]][-(1:16), ]
   }
+  
+  stock_train_val[[j]] <- list(train = vol.train, val = vol.val)
+
 }
+
+stock_train_val[[1]]$train[[400]]$volatility
   
 ```
 
@@ -164,15 +171,18 @@ for (i in 1 : length(vol)) {
 ##########
 vol = stock_volatility_list[[j]]
 stock = stock_files_list[[i]]
+vol.train[[1]] = stock_train_val[[j]]$train[[1]]
 ##########
 
-list.reg <- list() 
-stock_files_list[[j]] <- stock_files_list[[j]] %>% 
-                         mutate(time_bucket = ceiling(seconds_in_bucket / 30),
-                                num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
-len.train <- length(vol.train[[1]]$volatility) # TBC
+stock_wlr_train <- list()
 
 for (j in 1 : length(stock_files_list)) {
+  
+  list.reg <- list() 
+  stock_files_list[[j]] <- stock_files_list[[j]] %>% 
+                           mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                                  num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+  len.train <- length(stock_train_val[[j]]$train[[1]]$volatility)
   
    for (i in 1 : length(stock_volatility_list[[j]])) {
     stats.bucket <- stock_files_list[[j]] %>% 
@@ -184,19 +194,24 @@ for (j in 1 : length(stock_files_list)) {
     mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
     mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
     
-    list.reg[[i]] <- data.frame(volatility = vol.train[[i]]$volatility[-1],  # TBC
+    list.reg[[i]] <- data.frame(volatility = stock_train_val[[j]]$train[[i]]$volatility[-1], 
                                 price = mean.price$WAP[1:(len.train - 1)],
                                 order = mean.order$num_order[1:(len.train - 1)],
                                 BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
    }
   
+  stock_wlr_train[[j]] <- list.reg
+  
 }
+
+# Selecting the training data of the 500th 10 minute interval of the 5th stock
+stock_wlr_train[[5]][[500]]
 
 ```
 
 
 ```{r}
-
+# Single stock computation 
 lm.models <- list()
 
 for (i in 1 : length(vol)) {
@@ -207,8 +222,37 @@ for (i in 1 : length(vol)) {
 # for some periods, linear regression performs well
 summary(lm.models[[162]])
 
+
+##########
+vol = stock_volatility_list[[j]]
+stock = stock_files_list[[i]]
+vol.train[[1]] = stock_train_val[[j]]$train[[1]]
+list.reg[[i]] = stock_wlr_train[[j]][[i]]
+##########
+
+# Multiple stock computation
+wlr_model_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  lm.models <- list()
+  
+  for (i in 1 : length(stock_volatility_list[[j]])) {
+    lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, stock_wlr_train[[j]][[i]],
+                         weights = 0.8 ^ (((len.train - 2):0) / 2))
+  }
+  
+  wlr_model_list[[j]] <- lm.models
+
+}
+
+# Summary of the WLR model for stock 4 on the 30th 10 minute time bucket
+summary(wlr_model_list[[4]][[30]])
+
 ```
 
+
+```{r}
+
+```
 
 
 
