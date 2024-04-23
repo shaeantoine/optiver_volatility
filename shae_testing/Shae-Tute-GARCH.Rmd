@@ -76,7 +76,7 @@ ggplot(data = log_r1[[1]], aes(x = time, y = log_return)) + geom_line()
 ```
 
 ```{r}
-ggplot(data = vol[[1]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
+ggplot(data = vol[[500]], aes(x = time_bucket, y = volatility)) + geom_line() + geom_point() 
 ```
 
 # EDA and Aasumption Testing
@@ -99,19 +99,6 @@ box_test <- Box.test(model$residuals, lag = 20, type = "Ljung-Box")
 
 # Print the results
 print(box_test)
-```
-
-# Portmanteau test
-```{r}
-
-
-
-```
-
-
-#
-```{r}
-
 ```
 
 
@@ -215,11 +202,13 @@ spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1))
 ARMA_GARCH.models <- list()
 
 for (i in 1 : length(vol)) {
-  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r1[[i]] %>% 
-                                        filter(time <= 480) %>% pull(log_return),
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, 
+                                      data = log_r1[[i]] %>% 
+                                             filter(time <= 480) %>%
+                                             pull(log_return),
                                       solver = 'hybrid')
+  }
 
-}
 ```
 
 ```{r}
@@ -236,6 +225,7 @@ for (i in 1 : length(vol)) {
   RV.pred[i] <- mean(sqrt(colSums(future.path ^ 2)))
 }
 
+plot(RV.pred)
 ```
 
 
@@ -285,6 +275,7 @@ for (i in 1 : length(vol)){
   vol_mean_test <- c(vol_mean_test, mean(vol.val[[i]]$volatility))
   vol_mean_train <- c(vol_mean_train, mean(vol.train[[i]]$volatility))
 }
+
 ```
 
 ```{r}
@@ -296,6 +287,8 @@ ggplot(tail(df,n = 50), aes(x=time_slot))+
   geom_line(aes(y = vol_mean_test),color = "red")+
   geom_line(aes(y = RV.pred),color = "blue", linetype="twodash")
 ```
+
+
 
 # MSE AND QLIKE
 ```{r}
