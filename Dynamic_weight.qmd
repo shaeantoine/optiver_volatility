@@ -30,7 +30,7 @@ for 600 minute
 
 80% train - 75% model train (450 sec)
 
- - 5% get initial weight(30 sec)
+-   5% get initial weight(30 sec)
 
 ```{r}
 stock <- read.csv("data/individual_book_train/stock_100.csv")
@@ -144,10 +144,10 @@ pred1_adjust <- list()
 for(i in 1:length(vol)){
   fitted <- rep(1:4)
   pred1_adjust[[i]] <- data_frame(fitted)
-  pred1_adjust[[i]]$fitted[1] <- mean(pred1[[1]]$fitted[1:30])
-  pred1_adjust[[i]]$fitted[2] <- mean(pred1[[1]]$fitted[31:60])
-  pred1_adjust[[i]]$fitted[3] <- mean(pred1[[1]]$fitted[61:91])
-  pred1_adjust[[i]]$fitted[4] <- mean(pred1[[1]]$fitted[91:120])
+  pred1_adjust[[i]]$fitted[1] <- mean(pred1[[i]]$fitted[1:30])
+  pred1_adjust[[i]]$fitted[2] <- mean(pred1[[i]]$fitted[31:60])
+  pred1_adjust[[i]]$fitted[3] <- mean(pred1[[i]]$fitted[61:91])
+  pred1_adjust[[i]]$fitted[4] <- mean(pred1[[i]]$fitted[91:120])
 }
 pred1_adjust[[1]]
 ```
