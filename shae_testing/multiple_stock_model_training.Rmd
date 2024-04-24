@@ -34,10 +34,19 @@ volume2 <- sum(stock2$num_order)
 dir_stocks <- "~/Documents/DATA3888/optiver_volatility/data/individual_book_train/"
 all_stocks <- list.files(dir_stocks) # CHANGE
 five_stocks <- sample(all_stocks, 5)
+# 50: 66 cluster 1
+# 7: 84 cluster 2
+# 126: 28 cluster 3
+# 75: 89 cluster 4
+all_stocks[66]
+all_stocks[84]
+all_stocks[28]
+all_stocks[89]
+four_stocks = c(all_stocks[66], all_stocks[84], all_stocks[28], all_stocks[89])
 
 
 stock_files_list <- list()
-for (i in five_stocks) {
+for (i in four_stocks) {
   stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
 }
 
@@ -206,8 +215,8 @@ for (j in 1 : length(stock_files_list)) {
   
 }
 
-# Selecting the training data of the 500th 10 minute interval of the 5th stock
-stock_wlr_train[[5]][[500]]
+# Selecting the training data of the 500th 10 minute interval of the 4th stock
+stock_wlr_train[[4]][[500]]
 
 ```
 
