@@ -9,6 +9,8 @@ format:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+set.seed(3888)
 ```
 
 ```{r}
@@ -21,38 +23,61 @@ library(tidyverse)
 dir.short <- "data/individual_book_train"
 all.files.short <- list.files(dir.short)
 
-df_cl = data.frame(name = character(),
-                   mean_BAS = numeric(),
-                   var_BAS = numeric(),
-                   price_diff = numeric(),
-                   stringsAsFactors = FALSE)
+raw_df_cl = data.frame(name = character(),
+                       time_id = numeric(),
+                       mean_BAS = numeric(),
+                       mean_WAP = numeric(),
+                       imbalance = numeric(),
+                       stringsAsFactors = FALSE)
 
 for (i in all.files.short) {
   stock = read.csv(file.path(dir.short, i))
-  stock = stock |> mutate(BidAskSpread = ask_price1 / bid_price1 - 1)
+  
+  # randomly select time_ids from stock
+  time_ids = sample(unique(stock$time_id), 10)
   
   file_name = gsub("stock_", "", (gsub(".csv", "", i)))
-  mean_BAS = mean(stock$BidAskSpread)
-  var_BAS = var(stock$BidAskSpread)
-  price_diff = mean(abs(stock$ask_price1 - stock$bid_price1))
+  
+  stock = stock |> 
+      filter(time_id %in% time_ids) |>
+      mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) |>
+      mutate(BidAskSpread = ask_price1 / bid_price1 - 1) |>
+      mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) |>
+      group_by(time_id) |>
+      summarise(mean_BAS = mean(BidAskSpread),
+                mean_WAP = mean(WAP),
+                imbalance = mean(imbalance)) |>
+      mutate(file_name = file_name) 
+  
+  raw_df_cl = rbind(raw_df_cl, stock)
   
   print(file_name)
-  
-  df_cl = rbind(df_cl, list(file_name, mean_BAS, var_BAS, price_diff))
+
 }
 ```
 
 ## Apply clustering
 
 ```{r}
-colnames(df_cl) = c("name", "mean_BAS", "var_BAS", "price_diff")
+library(caret)
 
-df_cl$name = as.numeric(df_cl$name)
-df_cl = df_cl[order(df_cl$name),]
-row.names(df_cl) = df_cl$name
+df_cl = raw_df_cl
+
+df_cl$mean_BAS <- as.vector(scale(df_cl$mean_BAS, center = min(df_cl$mean_BAS), scale = max(df_cl$mean_BAS) - min(df_cl$mean_BAS)))
+df_cl$mean_WAP = as.vector(scale(df_cl$mean_WAP, center = min(df_cl$mean_WAP), scale = max(df_cl$mean_WAP) - min(df_cl$mean_WAP)))
+df_cl$imbalance = as.vector(scale(df_cl$imbalance, center = min(df_cl$imbalance), scale = max(df_cl$imbalance) - min(df_cl$imbalance)))
+
+df_cl$file_name = as.numeric(df_cl$file_name)
+df_cl = df_cl[order(df_cl$file_name),]
+df_cl$name = paste(df_cl$file_name, df_cl$time_id, sep = " ")
 
 df_cl = df_cl |>
-    select(-var_BAS)
+    filter(file_name != 31) |>
+    select(-time_id, -file_name) |>
+    select(-mean_WAP)
+
+df_cl <- df_cl[c("name", "mean_BAS", "imbalance")]
+
 ```
 
 ### Find optimal k - skree plot
@@ -80,20 +105,20 @@ k <- 4
 ### Cluster with k = 4
 
 ```{r}
-km.out <- kmeans(df_cl[-1], centers = 4, nstart = 20)
+km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
 
 df = data.frame(
-    names = row.names(df_cl),
+    names = df_cl$name,
     mean_BAS = df_cl$mean_BAS,
-    price_diff = df_cl$price_diff,
+    imbalance = df_cl$imbalance,
     cluster = factor(km.out$cluster)
 )
 
-plot = ggplot(df, aes(x = mean_BAS, y = price_diff, color = cluster, label = names)) + 
+plot = ggplot(df, aes(x = mean_BAS, y = imbalance, color = cluster, label = names)) + 
   geom_point() + 
   geom_text(aes(label=names), vjust = -1, hjust = 1) +
   theme_minimal() +
-  labs(title = "Cluster Plot", x = "mean_BAS", y = "price_diff")
+  labs(title = "Cluster Plot", x = "mean_BAS", y = "imbalance")
 
 library(plotly)
 ggplotly(plot)
