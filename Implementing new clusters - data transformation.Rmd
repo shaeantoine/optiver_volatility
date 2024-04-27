@@ -1,0 +1,99 @@
+---
+title: "Applying new clusters"
+output: html_document
+date: "2024-04-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(caret)
+dir_stocks <- "C:/Users/Jacob/Desktop/data/Optiver/individual_book_train"
+all_stocks <- list.files(dir_stocks)
+
+set.seed(123)
+four_stocks <- sample(all_stocks, 4)
+
+stock_files_list <- list()
+for (i in four_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+# Produce WAP, Bid-Ask Spread, and num_order for each stock
+for (i in 1:length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>%
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1),
+           BidAskSpread = ask_price1 / bid_price1 - 1,
+           num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+}
+
+# Extract data into 2000 time minute buckets
+bucket_list <- list()
+for (j in 1:length(stock_files_list)) {
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (k in 1:length(time_IDs)) {
+    bucket <- stock_files_list[[j]] %>%
+      filter(time_id == time_IDs[k])
+    bucket_list[[length(bucket_list) + 1]] <- bucket
+  }
+}
+bucket_list[[2000]]
+
+```
+
+```{r}
+# Prepare a data frame from the buckets for clustering
+bucket_df <- data.frame(
+  mean_BAS = numeric(),
+  mean_WAP = numeric(),
+  imbalance = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(bucket_list)) {
+  stock <- bucket_list[[i]]
+  stock <- stock %>%
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1),
+           BidAskSpread = ask_price1 / bid_price1 - 1,
+           imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
+    summarise(
+      mean_BAS = mean(BidAskSpread),
+      mean_WAP = mean(WAP),
+      imbalance = mean(imbalance)
+    )
+  bucket_df <- rbind(bucket_df, stock)
+}
+
+# Scale the features
+bucket_df_scaled <- as.data.frame(lapply(bucket_df, scale))
+
+# Clustering
+set.seed(123)
+k <- 4
+km.out <- kmeans(bucket_df_scaled, centers = k, nstart = 20)
+
+# Add cluster assignments back to the bucket_df
+bucket_df$cluster <- km.out$cluster
+
+# To mimic the nested list output structure of the original code
+cluster_data_lists <- vector("list", k)
+for (j in 1:k) {
+  cluster_data_lists[[j]] <- bucket_list[bucket_df$cluster == j]
+}
+
+library(ggplot2)
+ggplot(bucket_df, aes(x = mean_WAP, y = mean_BAS, color = as.factor(cluster))) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Cluster Plot of Mean WAP vs. Mean Bid-Ask Spread",
+       x = "Mean WAP",
+       y = "Mean Bid-Ask Spread",
+       color = "Cluster") +
+  theme_minimal()
+
+```
+
+
