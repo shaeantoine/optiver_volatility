@@ -216,6 +216,8 @@ for (j in 1:4) {
   cluster_GARCH_models[[j]] <- ARMA_GARCH.models
 }
 
+length(as.list(coef(cluster_GARCH_models[[1]][[103]])))
+
 ```
 
 ```{r}
@@ -238,13 +240,16 @@ for (j in 1:4) {
 
 
 # Application on multiple clusters
-
+# HAS NAs CAUSING PROBLEMS 
 cluster_rv_pred <- list()
 for (j in 1:4) {
   RV.pred <- rep(0, length(cluster_vol[[j]]))
 
   for (i in 1 : length(cluster_vol[[j]])) {
     fspec <- getspec(cluster_GARCH_models[[j]][[i]])
+    if (length(as.list(coef(cluster_GARCH_models[[j]][[i]]))) == 0) {
+      next
+    }
     setfixed(fspec) <- as.list(coef(cluster_GARCH_models[[j]][[i]]))
     future.path <- fitted(ugarchpath(fspec, n.sim = 30, m.sim = 1000))
     # Due to numerical issues, sometimes NA value can be produced 
@@ -262,8 +267,8 @@ for (j in 1:4) {
 ```{r}
 
 # Single cluster application
-#
 # vol.train <- list()
+#
 # vol.val <- list()
 # 
 # for (i in 1 : length(log_r1)) {
@@ -312,7 +317,7 @@ for (j in 1:4) {
 for (j in 1:4) {
   MSE.lm <- vector()
   QLIKE.lm <- vector()
-  for (i in 1 : length(vol)) {
+  for (i in 1 : length(cluster_vol[[j]])) {
     MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_rv_pred[[j]][[i]]) ^ 2))
     QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_rv_pred[[j]][[i]] - 
                                    log(cluster_vol_val[[j]][[i]]$volatility / cluster_rv_pred[[j]][[i]]) - 1))
@@ -329,6 +334,50 @@ for (j in 1:4) {
 
 ```
 
+```{r}
+# Set up the layout with 1 row and 2 columns for the figures
+par(mfrow = c(2, 2))
+
+# Initialize lists to store MSE and QLIKE values for each iteration
+all_MSE <- list()
+all_QLIKE <- list()
+
+# Iterate over each iteration of the loop
+for (j in 1:4) {
+  MSE.lm <- vector()
+  QLIKE.lm <- vector()
+  
+  # Calculate MSE and QLIKE values for each cluster in the current iteration
+  for (i in 1:length(cluster_vol[[j]])) {
+    MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_rv_pred[[j]][[i]]) ^ 2))
+    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_rv_pred[[j]][[i]] - 
+                                   log(cluster_vol_val[[j]][[i]]$volatility / cluster_rv_pred[[j]][[i]]) - 1))
+  }
+  
+  # Exclude the maximum MSE value for each iteration
+  max_index <- which.max(MSE.lm)
+  MSE.lm_filtered <- MSE.lm[-max_index]
+  
+  # Store MSE and QLIKE values for this iteration
+  all_MSE[[j]] <- MSE.lm_filtered
+  all_QLIKE[[j]] <- QLIKE.lm
+  
+  # Plot MSE values
+  # boxplot(MSE.lm_filtered, horizontal = TRUE, main = "MSE")
+}
+
+for (j in 1:4) {
+  boxplot(all_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.000001))
+}
+
+# Plot QLIKE values
+for (j in 1:4) {
+  boxplot(all_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 2))
+}
+
+# Reset the plotting settings to default
+par(mfrow = c(1, 1))
+```
 
 
 
