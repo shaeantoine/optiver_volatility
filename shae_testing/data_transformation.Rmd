@@ -57,6 +57,7 @@ for (j in 1 : length(stock_files_list)) {
 
 bucket_list[[2000]]
 
+tail(bucket_list[[2000]])
 ```
 
 ```{r}
