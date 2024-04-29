@@ -1,0 +1,722 @@
+---
+title: "Garch_LM_All_Cluster"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    df-print: paged
+    table-of-contents: true
+---
+
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+library(cowplot)
+```
+
+```{r}
+dir_stocks <- "data/individual_book_train"
+all_stocks <- list.files(dir_stocks)
+
+set.seed(123)
+
+four_stocks <- sample(all_stocks, 4)
+
+stock_files_list <- list()
+for (i in four_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+for (i in 1 : length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>% 
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(BidAskSpread = ask_price1 / bid_price1 - 1) %>%
+    mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+}
+
+bucket_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (i in 1 : length(time_IDs)) {
+    bucket <- stock_files_list[[j]] %>% filter(time_id == time_IDs[i])
+    bucket_list[[length(bucket_list) + 1]] <- bucket
+  }
+}
+
+log_r1 <- list()
+for (i in 1 : length(bucket_list)) {
+  time_id <- bucket_list[[i]] %>% pull(time_id)
+  sec <- bucket_list[[i]] %>% pull(seconds_in_bucket)
+  price <- bucket_list[[i]] %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r, time_id = time_id[1: length(sec[-1])])
+  time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0, time_id = time_id[1: length(time.no.change)])
+    log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+    log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+  }
+}
+
+
+bucket_bas <- list()
+for (i in 1 : length(bucket_list)) {
+  bas <- bucket_list[[i]] %>% pull(BidAskSpread)
+  bucket_bas[[i]] <- mean(bas)
+}
+km.out <- kmeans(bucket_bas, centers = 4, nstart = 20)
+
+
+cluster_data_lists <- list()
+clusters <- list()
+for (i in 1:length(bucket_list)) {
+  cluster <- km.out$cluster[[i]]
+
+  if (!(cluster %in% clusters)) {
+    cluster_data_lists[[cluster]] <- list()
+  }
+  clusters <- c(clusters, cluster)
+  
+  cluster_data_lists[[cluster]][[length(cluster_data_lists[[cluster]]) + 1]] <- bucket_list[[i]]
+}
+```
+
+```{r}
+c1 = do.call(rbind, cluster_data_lists[[1]])
+c2 = do.call(rbind, cluster_data_lists[[2]])
+c3 = do.call(rbind, cluster_data_lists[[3]])
+c4 = do.call(rbind, cluster_data_lists[[4]])
+```
+
+```{r}
+log_r1 <- list()
+log_r2 <- list()
+log_r3 <- list()
+log_r4 <- list()
+
+vol1 <- list()
+vol2 <- list()
+vol3 <- list()
+vol4 <- list()
+
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+time_IDs <- unique(c1[, 1])
+for (i in 1 : length(time_IDs)) {
+  sec <- c1 %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- c1 %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+    log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+  }
+}
+for (i in 1 : length(log_r1)) {
+  log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+  vol1[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
+  colnames(vol1[[i]]) <- c('time_bucket', 'volatility')
+}
+
+##2
+time_IDs <- unique(c2[, 1])
+for (i in 1 : length(time_IDs)) {
+  sec <- c2 %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- c2 %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r2[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_r2[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_r2[[i]] <- rbind(log_r2[[i]], new.df)
+    log_r2[[i]] <- log_r2[[i]][order(log_r2[[i]]$time), ]
+  }
+}
+for (i in 1 : length(log_r2)) {
+  log_r2[[i]] <- log_r2[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+  vol2[[i]] <- aggregate(log_return ~ time_bucket, data = log_r2[[i]], FUN = comp_vol)
+  colnames(vol2[[i]]) <- c('time_bucket', 'volatility')
+}
+
+##3
+time_IDs <- unique(c3[, 1])
+for (i in 1 : length(time_IDs)) {
+  sec <- c3 %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- c3 %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r3[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_r3[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_r3[[i]] <- rbind(log_r3[[i]], new.df)
+    log_r3[[i]] <- log_r3[[i]][order(log_r3[[i]]$time), ]
+  }
+}
+for (i in 1 : length(log_r3)) {
+  log_r3[[i]] <- log_r3[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+  vol3[[i]] <- aggregate(log_return ~ time_bucket, data = log_r3[[i]], FUN = comp_vol)
+  colnames(vol3[[i]]) <- c('time_bucket', 'volatility')
+}
+
+##4
+time_IDs <- unique(c4[, 1])
+for (i in 1 : length(time_IDs)) {
+  sec <- c4 %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+  price <- c4 %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+  log_r <- log(price[-1] / price[1:(length(price) - 1)])
+  log_r4[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+  time.no.change <- (1:600)[!(1:600 %in% log_r4[[i]]$time)]
+  if (length(time.no.change) > 0) {
+    new.df <- data.frame(time = time.no.change, log_return = 0)
+    log_r4[[i]] <- rbind(log_r4[[i]], new.df)
+    log_r4[[i]] <- log_r4[[i]][order(log_r4[[i]]$time), ]
+  }
+}
+for (i in 1 : length(log_r4)) {
+  log_r4[[i]] <- log_r4[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+  vol4[[i]] <- aggregate(log_return ~ time_bucket, data = log_r4[[i]], FUN = comp_vol)
+  colnames(vol4[[i]]) <- c('time_bucket', 'volatility')
+}
+
+vol.train1 <- list()
+vol.train2 <- list()
+vol.train3 <- list()
+vol.train4 <- list()
+vol.val1 <- list()
+vol.val2 <- list()
+vol.val3 <- list()
+vol.val4 <- list()
+
+for (i in 1 : length(log_r1)) {
+  vol.train1[[i]] <- vol1[[i]][1:10, ]
+  vol.val1[[i]] <- vol1[[i]][-(1:10), ]
+}
+for (i in 1 : length(log_r2)) {
+  vol.train2[[i]] <- vol2[[i]][1:10, ]
+  vol.val2[[i]] <- vol2[[i]][-(1:10), ]
+}
+for (i in 1 : length(log_r3)) {
+  vol.train3[[i]] <- vol3[[i]][1:10, ]
+  vol.val3[[i]] <- vol3[[i]][-(1:10), ]
+}
+for (i in 1 : length(log_r4)) {
+  vol.train4[[i]] <- vol4[[i]][1:10, ]
+  vol.val4[[i]] <- vol4[[i]][-(1:10), ]
+}
+```
+
+# lm
+
+```{r}
+list.reg1 <- list()
+list.reg2 <- list()
+list.reg3 <- list()
+list.reg4 <- list()
+
+c1 <- c1 %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train1 <- length(vol.train1[[1]]$volatility)
+c2 <- c2 %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train2 <- length(vol.train2[[1]]$volatility)
+c3 <- c3 %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train3 <- length(vol.train3[[1]]$volatility)
+c4 <- c4 %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                            num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+len.train4 <- length(vol.train4[[1]]$volatility)
+
+time_IDs <- unique(c1[, 1])
+for (i in 1 : length(vol1)) {
+  stats.bucket <- c1 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg1[[i]] <- data.frame(volatility = vol.train1[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train1 - 1)],
+                              order = mean.order$num_order[1:(len.train1 - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train1 - 1)])
+}
+time_IDs <- unique(c2[, 1])
+for (i in 1 : length(vol2)) {
+  stats.bucket <- c2 %>% filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg2[[i]] <- data.frame(volatility = vol.train2[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train2 - 1)],
+                              order = mean.order$num_order[1:(len.train2 - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train2 - 1)])
+}
+time_IDs <- unique(c3[, 1])
+for (i in 1 : length(vol3)) {
+  stats.bucket <- c3 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg3[[i]] <- data.frame(volatility = vol.train3[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train3 - 1)],
+                              order = mean.order$num_order[1:(len.train3 - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train3 - 1)])
+}
+time_IDs <- unique(c4[, 1])
+for (i in 1 : length(vol4)) {
+  stats.bucket <- c4 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg4[[i]] <- data.frame(volatility = vol.train4[[i]]$volatility[-1], 
+                              price = mean.price$WAP[1:(len.train4 - 1)],
+                              order = mean.order$num_order[1:(len.train4 - 1)],
+                              BidAskSpread = mean.BAS$BidAskSpread[1:(len.train4 - 1)])
+}
+
+
+lm.models1 <- list()
+lm.models2 <- list()
+lm.models3 <- list()
+lm.models4 <- list()
+for (i in 1 : length(vol1)) {
+  lm.models1[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg1[[i]],
+                       weights = 0.8 ^ (((len.train1 - 2):0) / 2))
+}
+for (i in 1 : length(vol2)) {
+  lm.models2[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg2[[i]],
+                       weights = 0.8 ^ (((len.train2 - 2):0) / 2))
+}
+for (i in 1 : length(vol3)) {
+  lm.models3[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg3[[i]],
+                       weights = 0.8 ^ (((len.train3 - 2):0) / 2))
+}
+for (i in 1 : length(vol4)) {
+  lm.models4[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg4[[i]],
+                       weights = 0.8 ^ (((len.train4 - 2):0) / 2))
+}
+
+list.reg.val1 <- list()
+list.reg.val2 <- list()
+list.reg.val3 <- list()
+list.reg.val4 <- list()
+len.val1 <- length(vol.val1[[1]]$volatility)
+len.val2 <- length(vol.val2[[1]]$volatility)
+len.val3 <- length(vol.val3[[1]]$volatility)
+len.val4 <- length(vol.val4[[1]]$volatility)
+pred2_1 <- list()
+pred2_2 <- list()
+pred2_3 <- list()
+pred2_4 <- list()
+
+time_IDs <- unique(c1[, 1])
+for (i in 1 : length(vol1)) {
+  stats.bucket <- c1 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket))
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg.val1[[i]] <- 
+    data.frame(volatility = vol.val1[[i]]$volatility, 
+               price = mean.price$WAP[len.train1:(len.train1 + len.val1 - 1)],
+               order = mean.order$num_order[len.train1:(len.train1 + len.val1 - 1)],
+               BidAskSpread = mean.BAS$BidAskSpread[len.train1:(len.train1 + len.val1 - 1)])
+  pred2_1[[i]] <- predict(lm.models1[[i]], newdata = list.reg.val1[[i]])
+}
+time_IDs <- unique(c2[, 1])
+for (i in 1 : length(vol2)) {
+  stats.bucket <- c2 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket))
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg.val2[[i]] <- 
+    data.frame(volatility = vol.val2[[i]]$volatility, 
+               price = mean.price$WAP[len.train2:(len.train2 + len.val2 - 1)],
+               order = mean.order$num_order[len.train2:(len.train2 + len.val2 - 1)],
+               BidAskSpread = mean.BAS$BidAskSpread[len.train2:(len.train2 + len.val2 - 1)])
+  pred2_2[[i]] <- predict(lm.models2[[i]], newdata = list.reg.val2[[i]])
+}
+time_IDs <- unique(c3[, 1])
+for (i in 1 : length(vol3)) {
+  stats.bucket <- c3 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket))
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg.val3[[i]] <- 
+    data.frame(volatility = vol.val3[[i]]$volatility, 
+               price = mean.price$WAP[len.train3:(len.train3 + len.val3 - 1)],
+               order = mean.order$num_order[len.train3:(len.train3 + len.val3 - 1)],
+               BidAskSpread = mean.BAS$BidAskSpread[len.train3:(len.train3 + len.val3 - 1)])
+  pred2_3[[i]] <- predict(lm.models3[[i]], newdata = list.reg.val3[[i]])
+}
+time_IDs <- unique(c4[, 1])
+for (i in 1 : length(vol4)) {
+  stats.bucket <- c4 %>% 
+    filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+    select(c(BidAskSpread, WAP, num_order, time_bucket))
+  mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+  mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+  list.reg.val4[[i]] <- 
+    data.frame(volatility = vol.val4[[i]]$volatility, 
+               price = mean.price$WAP[len.train4:(len.train4 + len.val4 - 1)],
+               order = mean.order$num_order[len.train4:(len.train4 + len.val4 - 1)],
+               BidAskSpread = mean.BAS$BidAskSpread[len.train4:(len.train4 + len.val4 - 1)])
+  pred2_4[[i]] <- predict(lm.models4[[i]], newdata = list.reg.val4[[i]])
+}
+
+```
+
+```{r}
+length(pred2_1)
+length(pred2_2)
+length(pred2_3)
+length(pred2_4)
+```
+
+# egarch
+
+```{r}
+spec <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(0, 0)), 
+                   distribution.model = "norm")
+```
+
+```{r}
+#1
+ARMA_GARCH.models <- list()
+for (i in 1 : length(vol1)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r1[[i]] %>% 
+                                        filter(time <= 300) %>% pull(log_return),
+                                      solver = 'hybrid')
+}
+pred1_1 <- rep(0, length(vol1))
+pred1_v2_1 <- list()
+for (i in 1 : length(vol1)) {
+  fitted <- rep(1,300)
+  pred1_v2_1[[i]] <- data_frame(fitted)
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred1_1[i] <- mean(sqrt(colSums(future.path ^ 2)))
+  for(j in 1: nrow(future.path)){
+    pred1_v2_1[[i]]$fitted[j] <- mean(sqrt(sum(future.path[j,] ^ 2)))
+  }
+}
+#2
+ARMA_GARCH.models <- list()
+for (i in 1 : length(vol2)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r2[[i]] %>% 
+                                        filter(time <= 300) %>% pull(log_return),
+                                      solver = 'hybrid')
+}
+pred1_2 <- rep(0, length(vol2))
+pred1_v2_2 <- list()
+for (i in 1 : length(vol2)) {
+  fitted <- rep(1,300)
+  pred1_v2_2[[i]] <- data_frame(fitted)
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred1_2[i] <- mean(sqrt(colSums(future.path ^ 2)))
+  for(j in 1: nrow(future.path)){
+    pred1_v2_2[[i]]$fitted[j] <- mean(sqrt(sum(future.path[j,] ^ 2)))
+  }
+}
+#3
+ARMA_GARCH.models <- list()
+for (i in 1 : length(vol3)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r3[[i]] %>% 
+                                        filter(time <= 300) %>% pull(log_return),
+                                      solver = 'hybrid')
+}
+pred1_3 <- rep(0, length(vol3))
+pred1_v2_3 <- list()
+for (i in 1 : length(vol3)) {
+  fitted <- rep(1,300)
+  pred1_v2_3[[i]] <- data_frame(fitted)
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred1_3[i] <- mean(sqrt(colSums(future.path ^ 2)))
+  for(j in 1: nrow(future.path)){
+    pred1_v2_3[[i]]$fitted[j] <- mean(sqrt(sum(future.path[j,] ^ 2)))
+  }
+}
+#4
+ARMA_GARCH.models <- list()
+for (i in 1 : length(vol4)) {
+  ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, data = log_r4[[i]] %>% 
+                                        filter(time <= 300) %>% pull(log_return),
+                                      solver = 'hybrid')
+}
+pred1_4 <- rep(0, length(vol4))
+pred1_v2_4 <- list()
+for (i in 1 : length(vol4)) {
+  fitted <- rep(1,300)
+  pred1_v2_4[[i]] <- data_frame(fitted)
+  fspec <- getspec(ARMA_GARCH.models[[i]])
+  setfixed(fspec) <- as.list(coef(ARMA_GARCH.models[[i]]))
+  future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
+  future.path[is.na(future.path)] <- 0 
+  pred1_4[i] <- mean(sqrt(colSums(future.path ^ 2)))
+  for(j in 1: nrow(future.path)){
+    pred1_v2_4[[i]]$fitted[j] <- mean(sqrt(sum(future.path[j,] ^ 2)))
+  }
+}
+```
+
+```{r}
+pred1_v2_adjust1 <- list()
+for(i in 1:length(vol1)){
+  fitted <- rep(1:10)
+  pred1_v2_adjust1[[i]] <- data_frame(fitted)
+  pred1_v2_adjust1[[i]]$fitted[1] <- mean(pred1_v2_1[[i]]$fitted[1:30])
+  pred1_v2_adjust1[[i]]$fitted[2] <- mean(pred1_v2_1[[i]]$fitted[31:60])
+  pred1_v2_adjust1[[i]]$fitted[3] <- mean(pred1_v2_1[[i]]$fitted[61:91])
+  pred1_v2_adjust1[[i]]$fitted[4] <- mean(pred1_v2_1[[i]]$fitted[91:120])
+  pred1_v2_adjust1[[i]]$fitted[5] <- mean(pred1_v2_1[[i]]$fitted[121:150])
+  pred1_v2_adjust1[[i]]$fitted[6] <- mean(pred1_v2_1[[i]]$fitted[151:180])
+  pred1_v2_adjust1[[i]]$fitted[7] <- mean(pred1_v2_1[[i]]$fitted[181:210])
+  pred1_v2_adjust1[[i]]$fitted[8] <- mean(pred1_v2_1[[i]]$fitted[211:240])
+  pred1_v2_adjust1[[i]]$fitted[9] <- mean(pred1_v2_1[[i]]$fitted[241:270])
+  pred1_v2_adjust1[[i]]$fitted[10] <- mean(pred1_v2_1[[i]]$fitted[271:300])
+}
+pred1_v2_adjust2 <- list()
+for(i in 1:length(vol2)){
+  fitted <- rep(1:10)
+  pred1_v2_adjust2[[i]] <- data_frame(fitted)
+  pred1_v2_adjust2[[i]]$fitted[1] <- mean(pred1_v2_2[[i]]$fitted[1:30])
+  pred1_v2_adjust2[[i]]$fitted[2] <- mean(pred1_v2_2[[i]]$fitted[31:60])
+  pred1_v2_adjust2[[i]]$fitted[3] <- mean(pred1_v2_2[[i]]$fitted[61:91])
+  pred1_v2_adjust2[[i]]$fitted[4] <- mean(pred1_v2_2[[i]]$fitted[91:120])
+  pred1_v2_adjust2[[i]]$fitted[5] <- mean(pred1_v2_2[[i]]$fitted[121:150])
+  pred1_v2_adjust2[[i]]$fitted[6] <- mean(pred1_v2_2[[i]]$fitted[151:180])
+  pred1_v2_adjust2[[i]]$fitted[7] <- mean(pred1_v2_2[[i]]$fitted[181:210])
+  pred1_v2_adjust2[[i]]$fitted[8] <- mean(pred1_v2_2[[i]]$fitted[211:240])
+  pred1_v2_adjust2[[i]]$fitted[9] <- mean(pred1_v2_2[[i]]$fitted[241:270])
+  pred1_v2_adjust2[[i]]$fitted[10] <- mean(pred1_v2_2[[i]]$fitted[271:300])
+}
+pred1_v2_adjust3 <- list()
+for(i in 1:length(vol3)){
+  fitted <- rep(1:10)
+  pred1_v2_adjust3[[i]] <- data_frame(fitted)
+  pred1_v2_adjust3[[i]]$fitted[1] <- mean(pred1_v2_3[[i]]$fitted[1:30])
+  pred1_v2_adjust3[[i]]$fitted[2] <- mean(pred1_v2_3[[i]]$fitted[31:60])
+  pred1_v2_adjust3[[i]]$fitted[3] <- mean(pred1_v2_3[[i]]$fitted[61:91])
+  pred1_v2_adjust3[[i]]$fitted[4] <- mean(pred1_v2_3[[i]]$fitted[91:120])
+  pred1_v2_adjust3[[i]]$fitted[5] <- mean(pred1_v2_3[[i]]$fitted[121:150])
+  pred1_v2_adjust3[[i]]$fitted[6] <- mean(pred1_v2_3[[i]]$fitted[151:180])
+  pred1_v2_adjust3[[i]]$fitted[7] <- mean(pred1_v2_3[[i]]$fitted[181:210])
+  pred1_v2_adjust3[[i]]$fitted[8] <- mean(pred1_v2_3[[i]]$fitted[211:240])
+  pred1_v2_adjust3[[i]]$fitted[9] <- mean(pred1_v2_3[[i]]$fitted[241:270])
+  pred1_v2_adjust3[[i]]$fitted[10] <- mean(pred1_v2_3[[i]]$fitted[271:300])
+}
+pred1_v2_adjust4 <- list()
+for(i in 1:length(vol4)){
+  fitted <- rep(1:10)
+  pred1_v2_adjust4[[i]] <- data_frame(fitted)
+  pred1_v2_adjust4[[i]]$fitted[1] <- mean(pred1_v2_4[[i]]$fitted[1:30])
+  pred1_v2_adjust4[[i]]$fitted[2] <- mean(pred1_v2_4[[i]]$fitted[31:60])
+  pred1_v2_adjust4[[i]]$fitted[3] <- mean(pred1_v2_4[[i]]$fitted[61:91])
+  pred1_v2_adjust4[[i]]$fitted[4] <- mean(pred1_v2_4[[i]]$fitted[91:120])
+  pred1_v2_adjust4[[i]]$fitted[5] <- mean(pred1_v2_4[[i]]$fitted[121:150])
+  pred1_v2_adjust4[[i]]$fitted[6] <- mean(pred1_v2_4[[i]]$fitted[151:180])
+  pred1_v2_adjust4[[i]]$fitted[7] <- mean(pred1_v2_4[[i]]$fitted[181:210])
+  pred1_v2_adjust4[[i]]$fitted[8] <- mean(pred1_v2_4[[i]]$fitted[211:240])
+  pred1_v2_adjust4[[i]]$fitted[9] <- mean(pred1_v2_4[[i]]$fitted[241:270])
+  pred1_v2_adjust4[[i]]$fitted[10] <- mean(pred1_v2_4[[i]]$fitted[271:300])
+}
+```
+
+# mix with 1 times weight adjust
+
+```{r}
+vol_mean1 <- vector()
+vol_mean2 <- vector()
+vol_mean3 <- vector()
+vol_mean4 <- vector()
+
+for(i in 1:length(vol1)){vol_mean1[[i]] <- mean(vol.val1[[i]]$volatility)}
+for(i in 1:length(vol2)){vol_mean2[[i]] <- mean(vol.val2[[i]]$volatility)}
+for(i in 1:length(vol3)){vol_mean3[[i]] <- mean(vol.val3[[i]]$volatility)}
+for(i in 1:length(vol4)){vol_mean4[[i]] <- mean(vol.val4[[i]]$volatility)}
+
+pred2_mean1 <- vector()
+pred2_mean2 <- vector()
+pred2_mean3 <- vector()
+pred2_mean4 <- vector()
+
+for(i in 1:length(pred2_1)){pred2_mean1[[i]] <- mean(pred2_1[[i]])}
+for(i in 1:length(pred2_2)){pred2_mean2[[i]] <- mean(pred2_2[[i]])}
+for(i in 1:length(pred2_3)){pred2_mean3[[i]] <- mean(pred2_3[[i]])}
+for(i in 1:length(pred2_4)){pred2_mean4[[i]] <- mean(pred2_4[[i]])}
+```
+
+## use smallest Qlike
+
+```{r,warning=FALSE,message=FALSE}
+mix1_1 <- vector()
+for (i in 1:length(vol1)) {
+  a <- 0.0
+  b <- 1.0
+  min_q <- 9999
+  select_val <- 0
+  for(j in 1:11){
+    m_w <- (a*pred1_1[[i]]) + (b*pred2_mean1[[i]])
+    q_w <- mean(m_w/ vol_mean1[[i]] -log(vol_mean1[[i]]/ m_w) - 1)
+    if(is.na(q_w) == TRUE){q_w <- 99999}
+    if(q_w < min_q){
+    min_q <- q_w
+    select_val <- m_w
+    }
+    a <- a + 0.1
+    b <- b - 0.1
+  }
+  mix1_1[[i]] <- select_val
+}
+
+
+mix1_2 <- vector()
+for (i in 1:length(vol2)) {
+  a <- 0.0
+  b <- 1.0
+  min_q <- 9999
+  select_val <- 0
+  for(j in 1:11){
+    m_w <- (a*pred1_2[[i]]) + (b*pred2_mean2[[i]])
+    q_w <- mean(m_w/ vol_mean2[[i]] -log(vol_mean2[[i]]/ m_w) - 1)
+    if(is.na(q_w) == TRUE){q_w <- 99999}
+    if(q_w < min_q){
+    min_q <- q_w
+    select_val <- m_w
+    }
+    a <- a + 0.1
+    b <- b - 0.1
+  }
+  mix1_2[[i]] <- select_val
+}
+
+mix1_3 <- vector()
+for (i in 1:length(vol3)) {
+  a <- 0.0
+  b <- 1.0
+  min_q <- 9999
+  select_val <- 0
+  for(j in 1:11){
+    m_w <- (a*pred1_3[[i]]) + (b*pred2_mean3[[i]])
+    q_w <- mean(m_w/ vol_mean3[[i]] -log(vol_mean3[[i]]/ m_w) - 1)
+    if(is.na(q_w) == TRUE){q_w <- 99999}
+    if(q_w < min_q){
+    min_q <- q_w
+    select_val <- m_w
+    }
+    a <- a + 0.1
+    b <- b - 0.1
+  }
+  mix1_3[[i]] <- select_val
+}
+
+mix1_4 <- vector()
+for (i in 1:length(vol4)) {
+  a <- 0.0
+  b <- 1.0
+  min_q <- 9999
+  select_val <- 0
+  for(j in 1:11){
+    m_w <- (a*pred1_4[[i]]) + (b*pred2_mean4[[i]])
+    q_w <- mean(m_w/ vol_mean4[[i]] -log(vol_mean4[[i]]/ m_w) - 1)
+    if(is.na(q_w) == TRUE){q_w <- 99999}
+    if(q_w < min_q){
+    min_q <- q_w
+    select_val <- m_w
+    }
+    a <- a + 0.1
+    b <- b - 0.1
+  }
+  mix1_4[[i]] <- select_val
+}
+```
+
+# Box Plot
+
+```{r}
+MSE_mix1_1 <- vector()
+MSE_mix1_2 <- vector()
+MSE_mix1_3 <- vector()
+MSE_mix1_4 <- vector()
+QLIKE_mix1_1 <- vector()
+QLIKE_mix1_2 <- vector()
+QLIKE_mix1_3 <- vector()
+QLIKE_mix1_4 <- vector()
+
+for (i in 1 : length(vol1)){
+  MSE_mix1_1 <- c(MSE_mix1_1,mean( vol_mean1[[i]] - mix1_1[[i]]) ^ 2)
+  QLIKE_mix1_1 <- c(QLIKE_mix1_1,mean(vol_mean1[[i]]/mix1_1[[i]]
+                                      - log(vol_mean1[[i]]/mix1_1[[i]])-1))
+}
+
+for (i in 1 : length(vol2)){
+  MSE_mix1_2 <- c(MSE_mix1_2,mean( vol_mean2[[i]] - mix1_2[[i]]) ^ 2)
+  QLIKE_mix1_2 <- c(QLIKE_mix1_2,mean(vol_mean2[[i]]/mix1_2[[i]]
+                                      - log(vol_mean2[[i]]/mix1_2[[i]])-1))
+}
+
+for (i in 1 : length(vol3)){
+  MSE_mix1_3 <- c(MSE_mix1_3,mean( vol_mean3[[i]] - mix1_3[[i]]) ^ 2)
+  QLIKE_mix1_3 <- c(QLIKE_mix1_3,mean(vol_mean3[[i]]/mix1_3[[i]]
+                                      - log(vol_mean3[[i]]/mix1_3[[i]])-1))
+}
+
+for (i in 1 : length(vol4)){
+  MSE_mix1_4 <- c(MSE_mix1_4,mean( vol_mean4[[i]] - mix1_4[[i]]) ^ 2)
+  QLIKE_mix1_4 <- c(QLIKE_mix1_4,mean(vol_mean4[[i]]/mix1_4[[i]]
+                                      - log(vol_mean4[[i]]/mix1_4[[i]])-1))
+}
+```
+
+```{r,warning=FALSE,message=FALSE}
+mse1_1 <- data_frame(MSE_mix1_1)
+mse1_2 <- data_frame(MSE_mix1_2)
+mse1_3 <- data_frame(MSE_mix1_3)
+mse1_4 <- data_frame(MSE_mix1_4)
+b1_1 <- ggplot(mse1_1,aes(y = MSE_mix1_1)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 1')
+b1_2 <- ggplot(mse1_2,aes(y = MSE_mix1_2)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 2')
+b1_3 <- ggplot(mse1_3,aes(y = MSE_mix1_3)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 3')
+b1_4 <- ggplot(mse1_4,aes(y = MSE_mix1_4)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 4')
+
+qle1_1 <- data_frame(QLIKE_mix1_1)
+qle1_2 <- data_frame(QLIKE_mix1_2)
+qle1_3 <- data_frame(QLIKE_mix1_3)
+qle1_4 <- data_frame(QLIKE_mix1_4)
+q1_1 <- ggplot(qle1_1,aes(y = QLIKE_mix1_1)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 1')
+q1_2 <- ggplot(qle1_2,aes(y = QLIKE_mix1_2)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 2')
+q1_3 <- ggplot(qle1_3,aes(y = QLIKE_mix1_3)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 3')
+q1_4 <- ggplot(qle1_4,aes(y = QLIKE_mix1_4)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 4')
+
+plot_1 <- plot_grid(b1_1,b1_2,b1_3,b1_4,q1_1,q1_2,q1_3,q1_4,nrow =2)
+titl <- ggdraw() + draw_label('Egarch + Linear regression Mix', fontface = 'bold')
+plot1_f <- plot_grid(titl,plot_1,ncol = 1,rel_heights = c(0.05,1))
+plot1_f
+```
