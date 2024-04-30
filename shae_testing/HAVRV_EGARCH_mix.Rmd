@@ -209,7 +209,7 @@ for (j in 1:4) {
     }
     ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, 
                                         data = cluster_log_r1[[j]][[i]] %>% 
-                                               filter(time <= 480) %>%
+                                               filter(time <= 300) %>%
                                                pull(log_return),
                                         solver = 'hybrid')
   } 
@@ -242,7 +242,8 @@ length(as.list(coef(cluster_GARCH_models[[1]][[103]])))
 # Application on multiple clusters
 cluster_rv_pred <- list()
 for (j in 1:4) {
-  RV.pred <- rep(0, length(cluster_vol[[j]]))
+  RV.pred <- rep(list(), length(cluster_vol[[j]]))
+  # RV.pred <- list()
 
   for (i in 1 : length(cluster_vol[[j]])) {
     fspec <- getspec(cluster_GARCH_models[[j]][[i]])
@@ -250,117 +251,32 @@ for (j in 1:4) {
       next
     }
     setfixed(fspec) <- as.list(coef(cluster_GARCH_models[[j]][[i]]))
-    future.path <- fitted(ugarchpath(fspec, n.sim = 30, m.sim = 1000))
-    # Due to numerical issues, sometimes NA value can be produced 
-    # We simply replace NA value with 0; you may come up with a better idea in your own project
+    future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
     future.path[is.na(future.path)] <- 0 
-    RV.pred[i] <- mean(sqrt(colSums(future.path ^ 2)))
+    
+    interval_length <- 30
+    num_intervals <- 10
+    interval_volatility <- numeric(num_intervals)
+    
+    for (k in 1:num_intervals) {
+      start_index <- (k - 1) * interval_length + 1
+      end_index <- k * interval_length
+      
+      interval_volatility[k] <- mean(sqrt(colSums(future.path[start_index:end_index, ]^2)))
+    }
+    
+    RV.pred[[i]] <- interval_volatility
+    # RV.pred[i] <- mean(sqrt(colSums(future.path ^ 2)))
   }
-  cluster_rv_pred[[j]] <- RV.pred
   
+  cluster_rv_pred[[j]] <- RV.pred
 }
+
+plot(cluster_rv_pred[[4]][[77]])
 
 ```
 
-# HAV-RV Development (Jason's Code)
-```{r}
-log_r1 <- list()
-time_IDs <- unique(testlist[, 1])
-for (i in 1 : length(time_IDs)) {
-  sec <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
-  price <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
-  log_r <- log(price[-1] / price[1:(length(price) - 1)])
-  log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
-  time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
-  if (length(time.no.change) > 0) {
-    new.df <- data.frame(time = time.no.change, log_return = 0)
-    log_r1[[i]] <- rbind(log_r1[[i]], new.df)
-    log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
-  }
-}
-
-# Divide the 10-minute period into non-overlapping 30-second intervals and use the list to store the volatility of stock for each 30-second period in different time periods.
-vol <- list()
-comp_vol <- function(x) {
-  return(sqrt(sum(x ^ 2)))
-}
-for (i in 1 : length(log_r1)) {
-  log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
-  vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
-  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
-}
-
-
-
-# Use the first 5 minutes of each 10-min time bucket for training data and the last 5 minutes for validation.
-vol.train <- list()
-vol.val <- list()
-
-for (i in 1 : length(log_r1)) {
-  vol.train[[i]] <- vol[[i]][1:16, ]
-  vol.val[[i]] <- vol[[i]][-(1:11), ]
-}
-
-len.train <- length(vol.train[[1]]$volatility)
-list.HAV <- list()
-
-for (i in 1 : length(vol)) {
-  mean.vol <- rep(0, len.train - 5)
-  for (j in 1 : 5) {
-    mean.vol <- mean.vol + vol.train[[i]]$volatility[j : (j + len.train - 6)] / 5
-  }
-  list.HAV[[i]] <- data.frame(vol = vol.train[[i]]$volatility[-(1:5)], 
-                              vol_1 = vol.train[[i]]$volatility[5:(len.train - 1)],
-                              mean_vol_5 = mean.vol)
-}
-
-# Fit the HAV model by using weighted least squares (WLS). For WLS, we use $w_t = \text{RV}_{t-1}/\sqrt{\text{RQ}_{t-1}}$ as the weight for each time period t.
-quar <- list()
-comp_quar <- function(x) {
-  return(length(x) / 3 * sum(x ^ 4))
-}
-for (i in 1 : length(log_r1)) {
-  quar[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_quar)
-  colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
-}
-
-HAV.wls.models <- list()
-
-for (i in 1 : length(vol)) {
-  # weight.HAV <- 0
-  HAV.wls.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]],
-                            weights = list.HAV[[i]]$vol_1 / 
-                              sqrt(quar[[i]]$quarticity[5:(len.train - 1)]))
-}
-
-# HAV-RV performs well for some time buckets
-#summary(HAV.wls.models[[218]])
-
-pred.lm <- list()
-
-len.val <- length(vol.val[[1]]$volatility)
-list.HAV1 <- list()
-for (i in 1 : length(vol)) {
-  mean.vol <- rep(0, len.val - 5)
-  for (j in 1 : 5) {
-    mean.vol <- mean.vol + vol.val[[i]]$volatility[j : (j + len.val - 6)] / 5
-  }
-  list.HAV1[[i]] <- data.frame(vol = vol.val[[i]]$volatility[-(1:5)], 
-                              vol_1 = vol.val[[i]]$volatility[5:(len.val - 1)],
-                              mean_vol_5 = mean.vol)
-  pred.lm[[i]] <- predict(HAV.wls.models[[i]], newdata = list.HAV1[[i]])
-}
-
-MSE.lm_1 <- vector()
-QLIKE.lm <- vector()
-for (i in 1 : length(vol)) {
-  MSE.lm_1 <- c(MSE.lm_1, mean((tail(vol.val[[i]]$volatility, 4) - pred.lm[[i]])^2))
-  QLIKE.lm <- c(QLIKE.lm, mean(tail(vol.val[[i]]$volatility, 4) / pred.lm[[i]] - log(tail(vol.val[[i]]$volatility, 4) / pred.lm[[i]]) - 1))
-}
-```
-
-
-# Evaluation
+# eGARCH Evaluation
 ```{r}
 
 # Single cluster application
@@ -382,8 +298,8 @@ for (j in 1:4) {
   vol.val <- list()
   
   for (i in 1 : length(cluster_log_r1[[j]])) {
-    vol.train[[i]] <- cluster_vol[[j]][[i]][1:16, ]
-    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:16), ]
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:10, ]
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:10), ]
   }
   cluster_vol_train[[j]] <- vol.train
   cluster_vol_val[[j]] <- vol.val
@@ -408,7 +324,7 @@ for (j in 1:4) {
 ```
 
 
-# MSE and QLIKE
+# eGARCH MSE and QLIKE
 
 ```{r}
 par(mfrow = c(2, 2))
@@ -439,16 +355,280 @@ for (j in 1:4) {
 }
 
 for (j in 1:4) {
-  boxplot(all_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 2))
+  boxplot(all_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 5))
+}
+
+```
+
+# HAV-RV Model development
+```{r}
+cluster_vol.train <- list()
+cluster_vol.val <- list()
+
+for (j in 1:4) { 
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1:length(cluster_log_r1[[j]])) {
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:10, ]  # First 16 Time buckets for Training
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:10), ]  # Remaining 4 Time buckets for validation
+  }
+  
+  cluster_vol.train[[j]] <- vol.train
+  cluster_vol.val[[j]] <- vol.val
+}
+cluster_vol.train[[3]][[10]]
+cluster_vol.val[[3]][[10]]
+```
+
+
+```{r}
+list_HAV_cluster <- list()
+
+for (j in 1:4) {
+  list_HAV <- list()
+  for (i in 1:length(cluster_vol[[j]])) {
+    len.train <- length(cluster_vol.train[[j]][[i]]$volatility)
+    mean.vol <- rep(0, len.train - 5)
+    
+    for (k in 1:5) {
+      mean.vol <- mean.vol + cluster_vol.train[[j]][[i]]$volatility[k:(k + len.train - 6)] / 5
+    }
+    
+    list_HAV[[i]] <- data.frame(
+      vol = cluster_vol.train[[j]][[i]]$volatility[-(1:5)], 
+      vol_1 = cluster_vol.train[[j]][[i]]$volatility[5:(len.train - 1)],
+      mean_vol_5 = mean.vol
+    )
+  }
+  list_HAV_cluster[[j]] <- list_HAV
+}
+
+list_HAV_cluster[[3]][[10]] #checks
+list_HAV_cluster[[2]][[10]]
+list_HAV_cluster[[1]][[10]]
+```
+
+```{r}
+cluster_quar <- list() 
+comp_quar <- function(x) {
+  return(length(x) / 3 * sum(x ^ 4))
+}
+
+for (j in 1:4) {  
+  quar <- list()
+  for (i in 1:length(cluster_log_r1[[j]])) {
+    quar[[i]] <- aggregate(log_return ~ time_bucket, data = cluster_log_r1[[j]][[i]], FUN = comp_quar)
+    colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
+  }
+  cluster_quar[[j]] <- quar
+}
+
+cluster_quar[[3]][[10]]
+cluster_quar[[2]][[10]]
+```
+
+```{r}
+list_HAV_wls_cluster <- list()
+
+for (j in 1:4) {
+  HAV_wls_models <- list()
+  for (i in 1:length(cluster_vol[[j]])) {
+    len.train <- length(cluster_vol.train[[j]][[i]]$volatility)
+    weights <- list_HAV_cluster[[j]][[i]]$vol_1 /
+               sqrt(cluster_quar[[j]][[i]]$quarticity[5:(len.train - 1)])
+
+    HAV_wls_models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, data = list_HAV_cluster[[j]][[i]],
+                              weights = weights)
+  }
+  list_HAV_wls_cluster[[j]] <- HAV_wls_models
+}
+
+list_HAV_wls_cluster[[3]][[1]]
+list_HAV_wls_cluster[[2]][[1]]
+```
+
+```{r}
+
+cluster_pred_lm <- list()
+
+for (j in 1:4) {
+  pred.lm <- list()
+  len.val <- length(cluster_vol.val[[j]][[1]]$volatility)  # Assumes that each cluster has at least one item
+  list_HAV1_cluster <- list()
+
+  for (i in 1:length(cluster_vol.val[[j]])) {
+    mean.vol <- rep(0, len.val - 5)
+    for (k in 1:5) {
+      if ((k + len.val - 6) <= length(cluster_vol.val[[j]][[i]]$volatility)) {
+        mean.vol <- mean.vol + cluster_vol.val[[j]][[i]]$volatility[k:(k + len.val - 6)] / 5
+      }
+    }
+    list_HAV1_cluster[[i]] <- data.frame(
+      vol = cluster_vol.val[[j]][[i]]$volatility[-(1:5)], 
+      vol_1 = cluster_vol.val[[j]][[i]]$volatility[5:(len.val - 1)],
+      mean_vol_5 = mean.vol
+    )
+
+    # Predict using the respective HAV model for this cluster
+    pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
+  }
+  
+  cluster_pred_lm[[j]] <- pred.lm
 }
 
 ```
 
 
+```{r}
+cluster_MSE_lm <- list()
+cluster_QLIKE_lm <- list()
+for (j in 1:4) {
+  MSE.lm_1 <- vector()
+  QLIKE.lm <- vector()
+  for (i in 1:length(cluster_vol.val[[j]])) {
+    tail_volatility = tail(cluster_vol.val[[j]][[i]]$volatility, 4)
+    tail_prediction = tail(cluster_pred_lm[[j]][[i]], 4)
+    MSE.lm_1 <- c(MSE.lm_1, mean((tail_volatility - tail_prediction)^2))
+    QLIKE.lm <- c(QLIKE.lm, mean(tail_volatility / tail_prediction - 
+                                 log(tail_volatility / tail_prediction) - 1))
+  }
+  cluster_MSE_lm[[j]] <- MSE.lm_1
+  cluster_QLIKE_lm[[j]] <- QLIKE.lm
+}
+
+par(mfrow = c(2, 4))
+for (j in 1:4) {
+  boxplot(cluster_MSE_lm[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00001))
+}
+for (j in 1:4) {
+  boxplot(cluster_QLIKE_lm[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 2))
+}
+
+```
+
+
+# Computation of HAV-RV and eGARCH weightings
+```{r}
+
+#weight
+# standard = mean(MSE.lm_1)
+# final_weight_hav = 1
+# final_weight_wlr = 0
+# 
+# weight_hav = 0.9
+# for (i in 1: 10){
+#   weight_wlr = 1 - weight_hav
+#   #mix
+#   mix = vector("list", length = length(pred.lm))
+#   for (i in 1:length(pred.lm)){
+#     mix[[i]] = pred.lm[[i]]*weight_hav + pred.lm2[[i]]*weight_wlr
+#   }
+#   
+#   MSE.lm <- vector()
+#   QLIKE.lm <- vector()
+#   for (i in 1 : length(vol)) {
+#     MSE.lm <- c(MSE.lm, mean((vol.val[[i]]$volatility - mix[[i]]) ^ 2))
+#     QLIKE.lm <- c(QLIKE.lm, mean(vol.val[[i]]$volatility / mix[[i]] - 
+#                                    log(vol.val[[i]]$volatility / mix[[i]]) - 1))
+#   }
+#   mix_mean = mean(MSE.lm)
+#   if (mix_mean < standard){
+#     final_weight_hav = weight_hav
+#     final_weight_wlr = weight_wlr
+#     standard = mix_mean
+#   }
+#   
+#   
+#   weight_hav = weight_hav - 0.1
+# }
+
+
+# Multiple clustering
+
+# standard = mean(MSE.lm_1)
+standard = Inf
+final_weight_hav = 1
+final_weight_garch = 0
+
+weight_hav = 0.9
+for (i in 1: 10){
+  weight_garch = 1 - weight_hav
+  #mix
+  mix = vector("list", length = length(cluster_pred_lm[[1]]))
+  for (i in 1:length(cluster_pred_lm[[1]])) {
+    mix[[i]] = cluster_pred_lm[[1]][[i]]*weight_hav + cluster_rv_pred[[1]][[i]][6:10]*weight_garch
+  }
+  
+  MSE.lm <- vector()
+  QLIKE.lm <- vector()
+  for (i in 1 : length(vol)) {
+    MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
+    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility[6:10] / mix[[i]] - 
+                                   log(cluster_vol_val[[j]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+  }
+  mix_mean = mean(na.omit(MSE.lm))
+  print(mix_mean < standard)
+  if (mix_mean < standard){
+    final_weight_hav = weight_hav
+    final_weight_garch = weight_garch
+    standard = mix_mean
+  }
+  
+  
+  weight_hav = weight_hav - 0.1
+}
+
+```
+
+
+```{r}
+mix = vector("list", length = length(pred.lm))
+for (i in 1:length(pred.lm)){
+  mix[[i]] = cluster_pred_lm[[1]][[i]]*0 + cluster_rv_pred[[1]][[i]][6:10]*1
+}
+MSE.lm <- vector()
+QLIKE.lm <- vector()
+for (i in 1 : length(vol)) {
+  MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[1]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
+  QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]] - 
+                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+}
+
+boxplot(MSE.lm, horizontal = TRUE, ylim=c(0,0.00001))
+boxplot(QLIKE.lm, horizontal = TRUE, ylim=c(0,2))
+```
+
+```{r}
+mean(QLIKE.lm.mix[is.finite(unlist(QLIKE.lm.mix)) & !is.nan(unlist(QLIKE.lm.mix))])
+mean(QLIKE.lm.garch[is.finite(unlist(QLIKE.lm.garch)) & !is.nan(unlist(QLIKE.lm.garch))])
+```
 
 
 
+```{r}
+par(mfrow = c(1, 2))
 
+mix = vector("list", length = length(pred.lm))
+for (i in 1:length(pred.lm)){
+  mix[[i]] = cluster_pred_lm[[1]][[i]]*0.5 + cluster_rv_pred[[1]][[i]][6:10]*0.5
+}
+QLIKE.lm.mix <- vector()
+for (i in 1 : length(vol)) {
+  QLIKE.lm.mix <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]] - 
+                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+}
+boxplot(x=QLIKE.lm.mix, horizontal = TRUE, main = 'QLIKE for Mixture on Cluster 1', ylim=c(0,2))
+
+
+QLIKE.lm.garch <- vector()
+for (i in 1 : length(vol)) {
+  QLIKE.lm.garch <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / cluster_rv_pred[[1]][[i]][6:10] - 
+                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / cluster_rv_pred[[1]][[i]][6:10]) - 1))
+}
+
+boxplot(x=QLIKE.lm.garch, horizontal = TRUE, main = 'QLIKE for GARCH on Cluster 1', ylim=c(0,2))
+```
 
 
 
