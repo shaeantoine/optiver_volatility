@@ -555,19 +555,20 @@ weight_hav = 0.9
 for (i in 1: 10){
   weight_garch = 1 - weight_hav
   #mix
-  mix = vector("list", length = length(cluster_pred_lm[[1]]))
-  for (i in 1:length(cluster_pred_lm[[1]])) {
-    mix[[i]] = cluster_pred_lm[[1]][[i]]*weight_hav + cluster_rv_pred[[1]][[i]][6:10]*weight_garch
+  mix = vector("list", length = length(cluster_pred_lm[[4]]))
+  for (i in 1:length(cluster_pred_lm[[4]])) {
+    mix[[i]] = cluster_pred_lm[[4]][[i]]*weight_hav + cluster_rv_pred[[4]][[i]][6:10]*weight_garch
   }
   
   MSE.lm <- vector()
   QLIKE.lm <- vector()
   for (i in 1 : length(vol)) {
-    MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
-    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility[6:10] / mix[[i]] - 
-                                   log(cluster_vol_val[[j]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+    MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[4]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
+    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]] - 
+                                   log(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]]) - 1))
   }
-  mix_mean = mean(na.omit(MSE.lm))
+  # mix_mean = mean(na.omit(MSE.lm))
+  mix_mean = mean(MSE.lm[is.finite(unlist(MSE.lm)) & !is.nan(unlist(MSE.lm))])
   print(mix_mean < standard)
   if (mix_mean < standard){
     final_weight_hav = weight_hav
@@ -599,11 +600,6 @@ boxplot(MSE.lm, horizontal = TRUE, ylim=c(0,0.00001))
 boxplot(QLIKE.lm, horizontal = TRUE, ylim=c(0,2))
 ```
 
-```{r}
-mean(QLIKE.lm.mix[is.finite(unlist(QLIKE.lm.mix)) & !is.nan(unlist(QLIKE.lm.mix))])
-mean(QLIKE.lm.garch[is.finite(unlist(QLIKE.lm.garch)) & !is.nan(unlist(QLIKE.lm.garch))])
-```
-
 
 
 ```{r}
@@ -611,27 +607,46 @@ par(mfrow = c(1, 2))
 
 mix = vector("list", length = length(pred.lm))
 for (i in 1:length(pred.lm)){
-  mix[[i]] = cluster_pred_lm[[1]][[i]]*0.5 + cluster_rv_pred[[1]][[i]][6:10]*0.5
+  mix[[i]] = cluster_pred_lm[[4]][[i]]*1 + cluster_rv_pred[[4]][[i]][6:10]*0
 }
 QLIKE.lm.mix <- vector()
 for (i in 1 : length(vol)) {
-  QLIKE.lm.mix <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]] - 
-                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+  QLIKE.lm.mix <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]] - 
+                                 log(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]]) - 1))
 }
-boxplot(x=QLIKE.lm.mix, horizontal = TRUE, main = 'QLIKE for Mixture on Cluster 1', ylim=c(0,2))
+boxplot(x=QLIKE.lm.mix, horizontal = FALSE, main = 'QLIKE for Mixture on Cluster 4', ylim=c(0,2))
 
 
 QLIKE.lm.garch <- vector()
 for (i in 1 : length(vol)) {
-  QLIKE.lm.garch <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / cluster_rv_pred[[1]][[i]][6:10] - 
-                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / cluster_rv_pred[[1]][[i]][6:10]) - 1))
+  QLIKE.lm.garch <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / cluster_rv_pred[[4]][[i]][6:10] - 
+                                 log(cluster_vol_val[[4]][[i]]$volatility[6:10] / cluster_rv_pred[[4]][[i]][6:10]) - 1))
 }
 
-boxplot(x=QLIKE.lm.garch, horizontal = TRUE, main = 'QLIKE for GARCH on Cluster 1', ylim=c(0,2))
+boxplot(x=QLIKE.lm.garch, horizontal = FALSE, main = 'QLIKE for GARCH on Cluster 4', ylim=c(0,2))
 ```
 
+```{r}
 
+mean(QLIKE.lm.mix[is.finite(unlist(QLIKE.lm.mix)) & !is.nan(unlist(QLIKE.lm.mix))])
+mean(QLIKE.lm.garch[is.finite(unlist(QLIKE.lm.garch)) & !is.nan(unlist(QLIKE.lm.garch))])
 
+```
+
+```{r}
+
+# Example data for two lines
+x <- list(line1 = cluster_vol_val[[4]][[13]]$volatility[6:10], line2 = mix[[13]])
+
+# Create a plot for the first line
+plot(x$line1, type = "l", col = "blue", xlab = "X", ylab = "Y", ylim=c(0,0.004))
+
+# Add the second line to the plot
+lines(x$line2, col = "red")
+
+# Add a legend
+legend("topright", legend = c("Line 1", "Line 2"), col = c("blue", "red"), lty = 1)
+```
 
 
 
