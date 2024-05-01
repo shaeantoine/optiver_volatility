@@ -91,46 +91,90 @@ length(cluster_data_lists[[1]])
 
 ```
 
+# Stratifying into clusters
+```{r}
+c1 = do.call(rbind, cluster_data_lists[[1]])
+c2 = do.call(rbind, cluster_data_lists[[2]])
+c3 = do.call(rbind, cluster_data_lists[[3]])
+c4 = do.call(rbind, cluster_data_lists[[4]])
+```
+
+
+# Building functions for cluster log returns and volatility calculations
+# This is far less efficient that nested for loops on indexes idk why
+```{r}
+
+# Compute volatility
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+# Compute cluster log returns
+# Takes in a time bucket data frame as input
+# SOMETHING IS WRONG HERE - DO NOT USE
+comp_cluster_logr <- function(x) {
+  stock_ids <- unique(x %>% pull(stock_id)) 
+  
+  for (stock_id in stock_ids) {
+    x_filter <- x %>% filter(stock_id == stock_id)
+    unique_time_IDs <- unique(x_filter[, 1])
+
+    for (time_id in unique_time_IDs) {
+      if (time_id %% 10 == 0) {
+        print(time_id)
+      }
+      sec <- x_filter %>% filter(time_id == time_id) %>% pull(seconds_in_bucket)
+      price <- x_filter %>% filter(time_id == time_id) %>% pull(WAP)
+      log_r <- log(price[-1] / price[1:(length(price) - 1)])
+      log_r1[[length(log_r1) + 1]] <- data.frame(time = sec[-1], log_return = log_r)
+      time.no.change <- (1:600)[!(1:600 %in% log_r1[[length(log_r1)]]$time)]
+      if (length(time.no.change) > 0) {
+        new.df <- data.frame(time = time.no.change, log_return = 0)
+        log_r1[[length(log_r1)]] <- rbind(log_r1[[length(log_r1)]], new.df)
+        log_r1[[length(log_r1)]] <- log_r1[[length(log_r1)]][order(log_r1[[length(log_r1)]]$time), ]
+      }
+    }
+  }
+  
+  return(log_r1)
+}
+
+# Compute cluster volatility
+# Takes in log returns data frame as input
+comp_cluster_vol <- function(x) {
+  for (i in 1 : length(x)) {
+    x[[i]] <- x[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+    vol[[i]] <- aggregate(log_return ~ time_bucket, data = x[[i]], FUN = comp_vol)
+    colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  return(vol)
+}
+
+log_r1 <- list()
+log_r2 <- list()
+log_r3 <- list()
+log_r4 <- list()
+
+log_r1[[23]] = comp_cluster_logr(c1)
+log_r2 = comp_cluster_logr(c2)
+log_r3 = comp_cluster_logr(c3)
+log_r4 = comp_cluster_logr(c4)
+
+vol1 <- list()
+vol2 <- list()
+vol3 <- list()
+vol4 <- list()
+
+vol1 = comp_cluster_vol(log_r1)
+vol2 = comp_cluster_vol(log_r2)
+vol3 = comp_cluster_vol(log_r3)
+vol4 = comp_cluster_vol(log_r4)
+
+```
+
 
 # Deriving the log returns for each time bucket
 ```{r}
-
-# Single stock approach 
-
-# log_r1 <- list()
-# for (i in 1 : length(bucket_list)) {
-#   sec <- bucket_list[[i]] %>% pull(seconds_in_bucket)
-#   price <- bucket_list[[i]] %>% pull(WAP)
-#   log_r <- log(price[-1] / price[1:(length(price) - 1)])
-#   log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
-#   time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
-#   if (length(time.no.change) > 0) {
-#     new.df <- data.frame(time = time.no.change, log_return = 0)
-#     log_r1[[i]] <- rbind(log_r1[[i]], new.df)
-#     log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
-#   }
-# }
-# 
-# log_r1[[300]]
-
-# Multiple time bucket approch - on cluster 3
-
-# log_r1 <- list()
-# for (i in 1 : length(cluster_data_lists[[3]])) {
-#   sec <- cluster_data_lists[[1]][[i]] %>% pull(seconds_in_bucket)
-#   price <- cluster_data_lists[[1]][[i]] %>% pull(WAP)
-#   log_r <- log(price[-1] / price[1:(length(price) - 1)])
-#   log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
-#   time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
-#   if (length(time.no.change) > 0) {
-#     new.df <- data.frame(time = time.no.change, log_return = 0)
-#     log_r1[[i]] <- rbind(log_r1[[i]], new.df)
-#     log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
-#   }
-# }
-# 
-# log_r1[[22]]
-
 # Multiple time bucket approch - on all clusters
 
 cluster_log_r1 <- list()
@@ -158,21 +202,6 @@ cluster_log_r1[[4]][[1]]
 
 # Deriving the volatility for each time
 ```{r}
-
-# Single cluster approach 
-
-# vol <- list()
-# 
-# comp_vol <- function(x) {
-#   return(sqrt(sum(x ^ 2)))
-# }
-# 
-# for (i in 1 : length(log_r1)) {
-#   log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ceiling(time / 30)) # I DON'T KNOW ABOUT THIS
-#   vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
-#   colnames(vol[[i]]) <- c('time_bucket', 'volatility')
-# }
-
 
 # Multiple cluster approach 
 
@@ -204,12 +233,9 @@ cluster_GARCH_models <- list()
 for (j in 1:4) {
   ARMA_GARCH.models <- list()
   for (i in 1 : length(cluster_vol[[j]])) {
-    if (i%%10 == 0) {
-      print(i)
-    }
     ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, 
                                         data = cluster_log_r1[[j]][[i]] %>% 
-                                               filter(time <= 300) %>%
+                                               filter(time <= 450) %>%
                                                pull(log_return),
                                         solver = 'hybrid')
   } 
@@ -251,11 +277,11 @@ for (j in 1:4) {
       next
     }
     setfixed(fspec) <- as.list(coef(cluster_GARCH_models[[j]][[i]]))
-    future.path <- fitted(ugarchpath(fspec, n.sim = 300, m.sim = 1000))
+    future.path <- fitted(ugarchpath(fspec, n.sim = 150, m.sim = 1000))
     future.path[is.na(future.path)] <- 0 
     
     interval_length <- 30
-    num_intervals <- 10
+    num_intervals <- 5
     interval_volatility <- numeric(num_intervals)
     
     for (k in 1:num_intervals) {
@@ -298,8 +324,8 @@ for (j in 1:4) {
   vol.val <- list()
   
   for (i in 1 : length(cluster_log_r1[[j]])) {
-    vol.train[[i]] <- cluster_vol[[j]][[i]][1:10, ]
-    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:10), ]
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:15, ]
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:15), ]
   }
   cluster_vol_train[[j]] <- vol.train
   cluster_vol_val[[j]] <- vol.val
@@ -370,15 +396,15 @@ for (j in 1:4) {
   vol.val <- list()
   
   for (i in 1:length(cluster_log_r1[[j]])) {
-    vol.train[[i]] <- cluster_vol[[j]][[i]][1:10, ]  # First 16 Time buckets for Training
-    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:10), ]  # Remaining 4 Time buckets for validation
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:15, ]  # First 15 Time buckets for Training
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:15), ]  # Remaining 5 Time buckets for validation
   }
   
   cluster_vol.train[[j]] <- vol.train
   cluster_vol.val[[j]] <- vol.val
 }
 cluster_vol.train[[3]][[10]]
-cluster_vol.val[[3]][[10]]
+cluster_vol.train[[2]][[10]]
 ```
 
 
@@ -408,6 +434,7 @@ list_HAV_cluster[[3]][[10]] #checks
 list_HAV_cluster[[2]][[10]]
 list_HAV_cluster[[1]][[10]]
 ```
+
 
 ```{r}
 cluster_quar <- list() 
@@ -567,8 +594,9 @@ for (i in 1: 10){
     QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]] - 
                                    log(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]]) - 1))
   }
+  
   # mix_mean = mean(na.omit(MSE.lm))
-  mix_mean = mean(MSE.lm[is.finite(unlist(MSE.lm)) & !is.nan(unlist(MSE.lm))])
+  mix_mean = mean(QLIKE.lm[is.finite(unlist(QLIKE.lm)) & !is.nan(unlist(QLIKE.lm))])
   print(mix_mean < standard)
   if (mix_mean < standard){
     final_weight_hav = weight_hav
@@ -600,20 +628,20 @@ boxplot(MSE.lm, horizontal = TRUE, ylim=c(0,0.00001))
 boxplot(QLIKE.lm, horizontal = TRUE, ylim=c(0,2))
 ```
 
-
-
 ```{r}
 par(mfrow = c(1, 2))
 
-mix = vector("list", length = length(pred.lm))
-for (i in 1:length(pred.lm)){
-  mix[[i]] = cluster_pred_lm[[4]][[i]]*1 + cluster_rv_pred[[4]][[i]][6:10]*0
+mix = vector("list", length = length(cluster_pred_lm[[4]]))
+for (i in 1:length(cluster_pred_lm[[4]])){
+  mix[[i]] = cluster_pred_lm[[4]][[i]]*0.3 + cluster_rv_pred[[4]][[i]][6:10]*0.7
 }
+
 QLIKE.lm.mix <- vector()
 for (i in 1 : length(vol)) {
   QLIKE.lm.mix <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]] - 
                                  log(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]]) - 1))
 }
+
 boxplot(x=QLIKE.lm.mix, horizontal = FALSE, main = 'QLIKE for Mixture on Cluster 4', ylim=c(0,2))
 
 
@@ -626,10 +654,19 @@ for (i in 1 : length(vol)) {
 boxplot(x=QLIKE.lm.garch, horizontal = FALSE, main = 'QLIKE for GARCH on Cluster 4', ylim=c(0,2))
 ```
 
+
+```{r}
+cluster_pred_lm[[4]][[30]]
+cluster_rv_pred[[4]][[30]][6:10]
+mix[[30]]
+cluster_vol_val[[4]][[30]]$volatility[6:10]
+```
+
+
 ```{r}
 
-mean(QLIKE.lm.mix[is.finite(unlist(QLIKE.lm.mix)) & !is.nan(unlist(QLIKE.lm.mix))])
-mean(QLIKE.lm.garch[is.finite(unlist(QLIKE.lm.garch)) & !is.nan(unlist(QLIKE.lm.garch))])
+summary(QLIKE.lm.mix[is.finite(unlist(QLIKE.lm.mix)) & !is.nan(unlist(QLIKE.lm.mix))])
+summary(QLIKE.lm.garch[is.finite(unlist(QLIKE.lm.garch)) & !is.nan(unlist(QLIKE.lm.garch))])
 
 ```
 
