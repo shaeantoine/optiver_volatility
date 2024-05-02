@@ -437,38 +437,38 @@ list_HAV_wls_cluster[[2]][[1]]
 # We have a problem here where we're trying to predict the next 5 periods based on less than 5 periods of data 
 # Thinking is using the already predicted volatility measures to then reinsert into the equation 
 ```{r}
-
-cluster_pred_lm <- list()
-
-for (j in 1:4) {
-  pred.lm <- list()
-  len.val <- length(cluster_vol.val[[j]][[1]]$volatility)  # Assumes that each cluster has at least one item
-  list_HAV1_cluster <- list()
-
-  for (i in 1:length(cluster_vol.val[[j]])) {
-    mean.vol <- rep(0, len.val - 5)
-    
-    for (k in 1:5) {
-      if ((k + len.val - 6) <= length(cluster_vol.val[[j]][[i]]$volatility)) {
-        mean.vol <- mean.vol + cluster_vol.val[[j]][[i]]$volatility[k:(k + len.val - 6)] / 5
-      }
-    }
-    
-    list_HAV1_cluster[[i]] <- data.frame(
-      #vol = cluster_vol.val[[j]][[i]]$volatility[-(1:5)], 
-      vol_1 = cluster_vol.val[[j]][[i]]$volatility[5:(len.val - 1)],
-      mean_vol_5 = mean.vol
-    )
-
-    # Predict using the respective HAV model for this cluster
-    pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
-  }
-  
-  cluster_pred_lm[[j]] <- pred.lm
-}
-
-cluster_vol.val[[4]][[554]]
-list_HAV1_cluster[[i]]
+# 
+# cluster_pred_lm <- list()
+# 
+# for (j in 1:4) {
+#   pred.lm <- list()
+#   len.val <- length(cluster_vol.val[[j]][[1]]$volatility)  # Assumes that each cluster has at least one item
+#   list_HAV1_cluster <- list()
+# 
+#   for (i in 1:length(cluster_vol.val[[j]])) {
+#     mean.vol <- rep(0, len.val - 5)
+#     
+#     for (k in 1:5) {
+#       if ((k + len.val - 6) <= length(cluster_vol.val[[j]][[i]]$volatility)) {
+#         mean.vol <- mean.vol + cluster_vol.val[[j]][[i]]$volatility[k:(k + len.val - 6)] / 5
+#       }
+#     }
+#     
+#     list_HAV1_cluster[[i]] <- data.frame(
+#       #vol = cluster_vol.val[[j]][[i]]$volatility[-(1:5)], 
+#       vol_1 = cluster_vol.val[[j]][[i]]$volatility[5:(len.val - 1)],
+#       mean_vol_5 = mean.vol
+#     )
+# 
+#     # Predict using the respective HAV model for this cluster
+#     pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
+#   }
+#   
+#   cluster_pred_lm[[j]] <- pred.lm
+# }
+# 
+# cluster_vol.val[[4]][[554]]
+# list_HAV1_cluster[[i]]
 
 ```
 
@@ -478,203 +478,42 @@ cluster_pred_lm <- list()
 
 for (j in 1:4) {
   pred.lm <- list()
+  latest_obs <- list()
   len.val <- length(cluster_vol.val[[j]][[1]]$volatility)
   list_HAV1_cluster <- list()
 
   for (i in 1:length(cluster_vol.val[[j]])) {
-    # mean.vol <- rep(0, len.val - 5)
-
-    # for (k in 1:5) {
-    #   if ((k + len.val - 6) <= length(cluster_vol.val[[j]][[i]]$volatility)) {
-    #     mean.vol <- mean.vol + cluster_vol.val[[j]][[i]]$volatility[k:(k + len.val - 6)] / 5
-    #   }
-    # }
     
-    mean.vol <- sum(cluster_vol.val[[j]][[i]]$volatility[11:15])/5
+    # This will predict 21, 22, 23, 24, 25 
+    # OFC we will replace this
+    latest_obs[[i]] <- cluster_vol.val[[j]][[i]]$volatility[16:20]
     
-    list_HAV1_cluster[[i]] <- data.frame(
-      vol_1 = cluster_vol.val[[j]][[i]]$volatility[15],
-      mean_vol_5 = mean.vol
-    )
-    
-    pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
-    
-    
-    # Iterate over time periods
-    for (t in 16:20) {
+    for (t in 1:5) {
         # Compute mean volatility for the last 5 observations
-        mean.vol <- sum(cluster_vol.val[[j]][[i]]$volatility[(t-4):t])/5
-        
+        mean.vol <- sum(latest_obs[[i]])/5
+
         # Create data frame with updated vol_1 and mean_vol_5
         list_HAV1_cluster[[i]] <- data.frame(
-          vol_1 = cluster_vol.val[[j]][[i]]$volatility[t],
+          # vol_1 = cluster_vol.val[[j]][[i]]$volatility[t],
+          vol_1 = latest_obs[[i]][5],
           mean_vol_5 = mean.vol
         )
+
+        pred.lm[[t]] <- unname(predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]]))
         
-        # Predict volatility for the current time period
-        pred.lm[[t]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
-        
-        # Update mean volatility for the next iteration
-        mean.vol <- (mean.vol * 5 - cluster_vol.val[[j]][[i]]$volatility[t-4] + cluster_vol.val[[j]][[i]]$volatility[t+1])/5
+        # Drop the oldest observation and add new predicted value 
+        latest_obs[[i]] <- c(latest_obs[[i]][-1], pred.lm[[t]])
     }
     
-    
-    
+    #cluster_pred_lm[[j]][[i]] <- latest_obs
     
   }
-  cluster_pred_lm[[j]] <- pred.lm
+  cluster_pred_lm[[j]] <- latest_obs
 }
 
 cluster_pred_lm[[4]][[2]]
 
 ```
-
-```{r}
-cluster_vol.val[[4]][[2]]
-```
-
-
-```{r}
-# Function to predict volatility with feedback loop
-predict_volatility_feedback <- function(data, wls_model, hist_length = 5, pred_length = 5) {
-  # Extract volatility data
-  volatility <- data$volatility
-
-  # Initialize predictions list and mean volatility
-  predictions <- list()
-  mean_vol <- head(volatility, hist_length)
-  
-  # Loop through prediction steps
-  for (i in (hist_length + 1):(hist_length + pred_length)) {
-    # Prepare data for prediction
-    new_data <- data.frame(
-      vol_past = volatility[-(i - hist_length:i - 1)],
-      mean_vol_past = mean_vol
-    )
-    
-    # Predict volatility using WLS model
-    prediction <- predict(wls_model, newdata = new_data)
-    
-    # Update mean volatility with past predictions
-    mean_vol <- c(mean_vol[-1], predictions[[length(predictions)]])
-    mean_vol <- mean_vol / length(mean_vol)
-    
-    # Store prediction
-    predictions[[i]] <- prediction
-  }
-  
-  # Return list of predictions
-  return(predictions)
-}
-###########
-volatility <- cluster_vol.val[[j]][[i]]$volatility
-wls_model = list_HAV_wls_cluster[[j]][[i]]
-hist_length = 5
-pred_length = 5
-
-predictions <- list()
-mean_vol <- head(volatility, hist_length)
-
-# Loop through prediction steps
-for (i in (hist_length + 1):(hist_length + pred_length)) {
-  # Prepare data for prediction
-  new_data <- data.frame(
-    vol_1 = volatility[(i - hist_length):(i - 1)],
-    mean_vol_5 = mean_vol
-  )
-  
-  # Predict volatility using WLS model
-  prediction <- predict(wls_model, newdata = new_data)
-  
-  # Store prediction
-  predictions[[i]] <- prediction
-  
-  # Update mean volatility with past predictions
-  mean_vol <- c(mean_vol[-1], predictions[[length(predictions)]])
-  mean_vol <- mean_vol / length(mean_vol)
-}
-###########
-
-# Example usage (assuming you have your data and model)
-predictions <- predict_volatility_feedback(data = cluster_vol.val[[j]][[i]], wls_model = list_HAV_wls_cluster[[j]][[i]])
-
-# Access individual predictions
-first_prediction <- predictions[[hist_length + 1]]
-last_prediction <- predictions[[hist_length + pred_length]]
-```
-
-
-# Chat GPT Attempt
-```{r}
-
-cluster_pred_lm <- list()
-
-for (j in 1:4) {
-  pred.lm <- list()
-  len.val <- length(cluster_vol.val[[j]][[1]]$volatility)
-  list_HAV1_cluster <- list()
-  
-  mean.vol <- rep(0, 5)
-  
-  for (i in 1:length(cluster_vol.val[[j]])) {
-    list_HAV1_cluster[[i]] <- data.frame(
-      #vol = cluster_vol.val[[j]][[i]]$volatility[-(1:5)], 
-      vol_1 = cluster_vol.val[[j]][[i]]$volatility[5:(len.val - 1)],
-      mean_vol_5 = mean.vol
-    )
-    
-    pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
-    
-    if (i < length(cluster_vol.val[[j]])) {
-      mean.vol <- (pred.lm[[i]] + mean.vol) / 2
-    }
-  }
-  
-  cluster_pred_lm[[j]] <- pred.lm
-}
-
-cluster_pred_lm[[1]][[753]]
-
-```
-
-# Gemini Attempt
-```{r}
-cluster_pred_lm <- list()
-
-# Initialize a variable to store all predictions
-all_predictions <- c()
-
-for (j in 1:4) {
-  pred.lm <- list()
-  len.val <- length(cluster_vol.val[[j]][[1]]$volatility)
-  list_HAV1_cluster <- list()
-  
-  # Initialize mean_vol with the first 5 actual volatilities (assuming these are available)
-  mean.vol <- head(cluster_vol.val[[j]][[1]]$volatility, 5)
-  
-  for (i in 1:length(cluster_vol.val[[j]])) {
-    list_HAV1_cluster[[i]] <- data.frame(
-      vol = cluster_vol.val[[j]][[i]]$volatility[-(1:5)],
-      vol_1 = cluster_vol.val[[j]][[i]]$volatility[5:(len.val - 1)],
-      # Include previous prediction or mean_vol in a new column
-      mean_vol_5 = c(mean.vol[-1], mean.vol[i]) # previous prediction
-    )
-    
-    pred.lm[[i]] <- predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV1_cluster[[i]])
-    
-    # Update mean.vol using ALL past predictions (including current)
-    mean.vol <- (c(all_predictions, pred.lm[[i]])) / (i + 5)
-    
-    # Store all predictions for feedback loop
-    all_predictions <- c(all_predictions, pred.lm[[i]])
-  }
-  
-  cluster_pred_lm[[j]] <- pred.lm
-}
-
-```
-
-
 
 
 ```{r}
