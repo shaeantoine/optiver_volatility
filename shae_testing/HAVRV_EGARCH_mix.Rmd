@@ -19,7 +19,7 @@ all_stocks <- list.files(dir_stocks)
 # Select 5 stocks at random
 # THIS SHOULD BE CHANGED TO ENSURE CLASS BALANCE BETWEEN 4 CLUSTERS
 ```{r}
-set.seed(123)
+set.seed(23542355)
 
 four_stocks <- sample(all_stocks, 4)
 
@@ -105,70 +105,70 @@ c4 = do.call(rbind, cluster_data_lists[[4]])
 ```{r results = 'hide'}
 
 # Compute volatility
-comp_vol <- function(x) {
-  return(sqrt(sum(x ^ 2)))
-}
+# comp_vol <- function(x) {
+#   return(sqrt(sum(x ^ 2)))
+# }
 
 # Compute cluster log returns
 # Takes in a time bucket data frame as input
 # SOMETHING IS WRONG HERE - DO NOT USE
-comp_cluster_logr <- function(x) {
-  stock_ids <- unique(x %>% pull(stock_id)) 
-  
-  for (stock_id in stock_ids) {
-    x_filter <- x %>% filter(stock_id == stock_id)
-    unique_time_IDs <- unique(x_filter[, 1])
+# comp_cluster_logr <- function(x) {
+#   stock_ids <- unique(x %>% pull(stock_id)) 
+#   
+#   for (stock_id in stock_ids) {
+#     x_filter <- x %>% filter(stock_id == stock_id)
+#     unique_time_IDs <- unique(x_filter[, 1])
+# 
+#     for (time_id in unique_time_IDs) {
+#       if (time_id %% 10 == 0) {
+#         print(time_id)
+#       }
+#       sec <- x_filter %>% filter(time_id == time_id) %>% pull(seconds_in_bucket)
+#       price <- x_filter %>% filter(time_id == time_id) %>% pull(WAP)
+#       log_r <- log(price[-1] / price[1:(length(price) - 1)])
+#       log_r1[[length(log_r1) + 1]] <- data.frame(time = sec[-1], log_return = log_r)
+#       time.no.change <- (1:600)[!(1:600 %in% log_r1[[length(log_r1)]]$time)]
+#       if (length(time.no.change) > 0) {
+#         new.df <- data.frame(time = time.no.change, log_return = 0)
+#         log_r1[[length(log_r1)]] <- rbind(log_r1[[length(log_r1)]], new.df)
+#         log_r1[[length(log_r1)]] <- log_r1[[length(log_r1)]][order(log_r1[[length(log_r1)]]$time), ]
+#       }
+#     }
+#   }
+#   
+#   return(log_r1)
+# }
 
-    for (time_id in unique_time_IDs) {
-      if (time_id %% 10 == 0) {
-        print(time_id)
-      }
-      sec <- x_filter %>% filter(time_id == time_id) %>% pull(seconds_in_bucket)
-      price <- x_filter %>% filter(time_id == time_id) %>% pull(WAP)
-      log_r <- log(price[-1] / price[1:(length(price) - 1)])
-      log_r1[[length(log_r1) + 1]] <- data.frame(time = sec[-1], log_return = log_r)
-      time.no.change <- (1:600)[!(1:600 %in% log_r1[[length(log_r1)]]$time)]
-      if (length(time.no.change) > 0) {
-        new.df <- data.frame(time = time.no.change, log_return = 0)
-        log_r1[[length(log_r1)]] <- rbind(log_r1[[length(log_r1)]], new.df)
-        log_r1[[length(log_r1)]] <- log_r1[[length(log_r1)]][order(log_r1[[length(log_r1)]]$time), ]
-      }
-    }
-  }
-  
-  return(log_r1)
-}
-
-# Compute cluster volatility
-# Takes in log returns data frame as input
-comp_cluster_vol <- function(x) {
-  for (i in 1 : length(x)) {
-    x[[i]] <- x[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
-    vol[[i]] <- aggregate(log_return ~ time_bucket, data = x[[i]], FUN = comp_vol)
-    colnames(vol[[i]]) <- c('time_bucket', 'volatility')
-  }
-  return(vol)
-}
-
-log_r1 <- list()
-log_r2 <- list()
-log_r3 <- list()
-log_r4 <- list()
-
-log_r1[[23]] = comp_cluster_logr(c1)
-log_r2 = comp_cluster_logr(c2)
-log_r3 = comp_cluster_logr(c3)
-log_r4 = comp_cluster_logr(c4)
-
-vol1 <- list()
-vol2 <- list()
-vol3 <- list()
-vol4 <- list()
-
-vol1 = comp_cluster_vol(log_r1)
-vol2 = comp_cluster_vol(log_r2)
-vol3 = comp_cluster_vol(log_r3)
-vol4 = comp_cluster_vol(log_r4)
+# # Compute cluster volatility
+# # Takes in log returns data frame as input
+# comp_cluster_vol <- function(x) {
+#   for (i in 1 : length(x)) {
+#     x[[i]] <- x[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+#     vol[[i]] <- aggregate(log_return ~ time_bucket, data = x[[i]], FUN = comp_vol)
+#     colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+#   }
+#   return(vol)
+# }
+# 
+# log_r1 <- list()
+# log_r2 <- list()
+# log_r3 <- list()
+# log_r4 <- list()
+# 
+# log_r1[[23]] = comp_cluster_logr(c1)
+# log_r2 = comp_cluster_logr(c2)
+# log_r3 = comp_cluster_logr(c3)
+# log_r4 = comp_cluster_logr(c4)
+# 
+# vol1 <- list()
+# vol2 <- list()
+# vol3 <- list()
+# vol4 <- list()
+# 
+# vol1 = comp_cluster_vol(log_r1)
+# vol2 = comp_cluster_vol(log_r2)
+# vol3 = comp_cluster_vol(log_r3)
+# vol4 = comp_cluster_vol(log_r4)
 
 ```
 
@@ -714,6 +714,14 @@ MSE_performance
 ```{r}
 
 par(mfrow = c(2, 2))
+
+MSE_combined <- rbind(MSE_performance[MSE_performance$Model == "HAV-RV", ],
+                      MSE_performance[MSE_performance$Model == "eGARCH", ],
+                      MSE_performance[MSE_performance$Model == "Mixture", ])
+
+QLIKE_combined <- rbind(QLIKE_performance[QLIKE_performance$Model == "HAV-RV", ],
+                       QLIKE_performance[QLIKE_performance$Model == "eGARCH", ],
+                       QLIKE_performance[QLIKE_performance$Model == "Mixture", ])
 
 # Combined MSE plot
 for (cluster in 1:4) {
