@@ -354,7 +354,7 @@ for (j in 1:4) {
   
   for (i in 1:length(cluster_log_r1[[j]])) {
     vol.train[[i]] <- cluster_vol[[j]][[i]][1:15, ]  # First 15 Time buckets for Training
-    vol.val[[i]] <- cluster_vol[[j]][[i]][1:20, ]  # Remaining 5 Time buckets for validation
+    vol.val[[i]] <- cluster_vol[[j]][[i]][16:20, ]  # Remaining 5 Time buckets for validation
   }
   
   cluster_vol.train[[j]] <- vol.train
@@ -413,6 +413,7 @@ cluster_quar[[3]][[10]]
 cluster_quar[[2]][[10]]
 ```
 
+# Is there a reason we're only using WLS? Is this an intentional decision? 
 ```{r}
 list_HAV_wls_cluster <- list()
 
@@ -472,21 +473,23 @@ list_HAV_wls_cluster[[2]][[1]]
 
 ```
 
-# Total experiment - rip it all apart
+
+# The premise with this code is to be able to predict 5 time periods in the future.
+# Previously we would only be predicting one period in the future at a time since we were using the validation data
+# This code block proposes an alternative where we predict one time period in the future and then use a rolling window
+# to feed each new prediction back into the dataset. 
 ```{r}
 cluster_pred_lm <- list()
 
 for (j in 1:4) {
   pred.lm <- list()
   latest_obs <- list()
-  len.val <- length(cluster_vol.val[[j]][[1]]$volatility)
   list_HAV1_cluster <- list()
 
-  for (i in 1:length(cluster_vol.val[[j]])) {
+  for (i in 1:length(cluster_vol.train[[j]])) {
     
-    # This will predict 21, 22, 23, 24, 25 
-    # OFC we will replace this
-    latest_obs[[i]] <- cluster_vol.val[[j]][[i]]$volatility[16:20]
+    # This will predict 16, 17, 18, 19, 20
+    latest_obs[[i]] <- cluster_vol.train[[j]][[i]]$volatility[11:15]
     
     for (t in 1:5) {
         # Compute mean volatility for the last 5 observations
@@ -523,20 +526,21 @@ for (j in 1:4) {
   MSE.lm_1 <- vector()
   QLIKE.lm <- vector()
   for (i in 1:length(cluster_vol.val[[j]])) {
-    tail_volatility = tail(cluster_vol.val[[j]][[i]]$volatility, 4)
-    tail_prediction = tail(cluster_pred_lm[[j]][[i]], 4)
-    MSE.lm_1 <- c(MSE.lm_1, mean((tail_volatility - tail_prediction)^2))
-    QLIKE.lm <- c(QLIKE.lm, mean(tail_volatility / tail_prediction - 
-                                 log(tail_volatility / tail_prediction) - 1))
+    volatility = cluster_vol.val[[j]][[i]]$volatility
+    prediction = cluster_pred_lm[[j]][[i]]
+    MSE.lm_1 <- c(MSE.lm_1, mean((volatility - prediction)^2))
+    QLIKE.lm <- c(QLIKE.lm, mean(volatility / prediction - 
+                                 log(volatility / prediction) - 1))
   }
   cluster_MSE_lm[[j]] <- MSE.lm_1
   cluster_QLIKE_lm[[j]] <- QLIKE.lm
 }
 
-par(mfrow = c(2, 4))
+par(mfrow = c(2, 2))
 for (j in 1:4) {
   boxplot(cluster_MSE_lm[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00001))
 }
+
 for (j in 1:4) {
   boxplot(cluster_QLIKE_lm[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 2))
 }
@@ -547,95 +551,94 @@ for (j in 1:4) {
 # Computation of HAV-RV and eGARCH weightings
 ```{r}
 
-#weight
-# standard = mean(MSE.lm_1)
-# final_weight_hav = 1
-# final_weight_wlr = 0
-# 
-# weight_hav = 0.9
-# for (i in 1: 10){
-#   weight_wlr = 1 - weight_hav
-#   #mix
-#   mix = vector("list", length = length(pred.lm))
-#   for (i in 1:length(pred.lm)){
-#     mix[[i]] = pred.lm[[i]]*weight_hav + pred.lm2[[i]]*weight_wlr
-#   }
-#   
-#   MSE.lm <- vector()
-#   QLIKE.lm <- vector()
-#   for (i in 1 : length(vol)) {
-#     MSE.lm <- c(MSE.lm, mean((vol.val[[i]]$volatility - mix[[i]]) ^ 2))
-#     QLIKE.lm <- c(QLIKE.lm, mean(vol.val[[i]]$volatility / mix[[i]] - 
-#                                    log(vol.val[[i]]$volatility / mix[[i]]) - 1))
-#   }
-#   mix_mean = mean(MSE.lm)
-#   if (mix_mean < standard){
-#     final_weight_hav = weight_hav
-#     final_weight_wlr = weight_wlr
-#     standard = mix_mean
-#   }
-#   
-#   
-#   weight_hav = weight_hav - 0.1
-# }
+cluster_weights <- list()
 
+for (j in 1:4) {
+  standard = Inf
+  final_weight_hav = 1
+  final_weight_garch = 0
+  
+  weight_hav = 1
+  for (i in 1: 10){
+    weight_garch = 1 - weight_hav
+    #mix
+    mix = vector("list", length = length(cluster_pred_lm[[j]]))
+    for (i in 1:length(cluster_pred_lm[[j]])) {
+      mix[[i]] = cluster_pred_lm[[j]][[i]]*weight_hav + cluster_rv_pred[[j]][[i]]*weight_garch
+    }
+    
+    MSE.lm <- vector()
+    QLIKE.lm <- vector()
+    for (i in 1 : length(cluster_vol_val[[j]][[i]]$volatility)) {
+      MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility - mix[[i]]) ^ 2))
+      QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility / mix[[i]] -
+                                     log(cluster_vol_val[[j]][[i]]$volatility / mix[[i]]) - 1))
+    }
 
-# Multiple clustering
-
-# standard = mean(MSE.lm_1)
-standard = Inf
-final_weight_hav = 1
-final_weight_garch = 0
-
-weight_hav = 0.9
-for (i in 1: 10){
-  weight_garch = 1 - weight_hav
-  #mix
-  mix = vector("list", length = length(cluster_pred_lm[[4]]))
-  for (i in 1:length(cluster_pred_lm[[4]])) {
-    mix[[i]] = cluster_pred_lm[[4]][[i]]*weight_hav + cluster_rv_pred[[4]][[i]][6:10]*weight_garch
+    # mix_mean = mean(na.omit(MSE.lm))
+    mix_mean = mean(QLIKE.lm[is.finite(unlist(QLIKE.lm)) & !is.nan(unlist(QLIKE.lm))])
+    print(mix_mean < standard)
+    if (mix_mean < standard){
+      final_weight_hav = weight_hav
+      final_weight_garch = weight_garch
+      standard = mix_mean
+    }
+    
+    weight_hav = weight_hav - 0.1
   }
   
-  MSE.lm <- vector()
+  cluster_weights[[j]] <- c(final_weight_hav, final_weight_garch)
+  
+}
+
+
+cluster_weights[[4]][1]
+```
+
+# I have a bad feeling about this code
+# There is no difference between 1,0 weights and 'optimized' weights
+```{r}
+
+# Multiple Clusters
+
+cluster_mix <- list()
+for (j in 1:4) {
+  mix <- list()
+  for (i in 1:length(cluster_pred_lm[[j]])){
+    mix[[i]] = cluster_pred_lm[[j]][[i]]*cluster_weights[[j]][1] + cluster_rv_pred[[j]][[i]]*cluster_weights[[j]][2]
+  } 
+  cluster_mix[[j]] <- mix
+}
+
+cluster_MSE_mix <- list()
+cluster_QLIKE_mix <- list()
+for (j in 1:4) {
+  MSE.lm_1 <- vector()
   QLIKE.lm <- vector()
-  for (i in 1 : length(vol)) {
-    MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[4]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
-    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]] - 
-                                   log(cluster_vol_val[[4]][[i]]$volatility[6:10] / mix[[i]]) - 1))
+  for (i in 1:length(cluster_vol.val[[j]])) {
+    MSE.lm_1 <- c(MSE.lm, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_mix[[j]][[i]]) ^ 2))
+    QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_mix[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_mix[[j]][[i]]) - 1))
   }
-  
-  # mix_mean = mean(na.omit(MSE.lm))
-  mix_mean = mean(QLIKE.lm[is.finite(unlist(QLIKE.lm)) & !is.nan(unlist(QLIKE.lm))])
-  print(mix_mean < standard)
-  if (mix_mean < standard){
-    final_weight_hav = weight_hav
-    final_weight_garch = weight_garch
-    standard = mix_mean
-  }
-  
-  
-  weight_hav = weight_hav - 0.1
+  cluster_MSE_mix[[j]] <- MSE.lm_1
+  cluster_QLIKE_mix[[j]] <- QLIKE.lm
+}
+
+par(mfrow = c(2, 2))
+for (j in 1:4) {
+  boxplot(cluster_MSE_mix[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.000001))
+}
+
+for (j in 1:4) {
+  boxplot(cluster_QLIKE_mix[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 2))
 }
 
 ```
-
 
 ```{r}
-mix = vector("list", length = length(pred.lm))
-for (i in 1:length(pred.lm)){
-  mix[[i]] = cluster_pred_lm[[1]][[i]]*0 + cluster_rv_pred[[1]][[i]][6:10]*1
-}
-MSE.lm <- vector()
-QLIKE.lm <- vector()
-for (i in 1 : length(vol)) {
-  MSE.lm <- c(MSE.lm, mean((cluster_vol_val[[1]][[i]]$volatility[6:10] - mix[[i]]) ^ 2))
-  QLIKE.lm <- c(QLIKE.lm, mean(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]] - 
-                                 log(cluster_vol_val[[1]][[i]]$volatility[6:10] / mix[[i]]) - 1))
-}
-
-boxplot(MSE.lm, horizontal = TRUE, ylim=c(0,0.00001))
-boxplot(QLIKE.lm, horizontal = TRUE, ylim=c(0,2))
+cluster_weights
 ```
+
 
 ```{r}
 par(mfrow = c(1, 2))
