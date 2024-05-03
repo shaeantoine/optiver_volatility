@@ -1,0 +1,365 @@
+---
+title: "final"
+format: html
+editor: visual
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(rugarch)
+library(tidyverse)
+library(caret)
+library(plotly)
+library(gridExtra)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# new
+dir_stocks <- "individual_book_train"
+all_stocks <- list.files(dir_stocks)
+
+set.seed(123)
+four_stocks <- sample(all_stocks, 4)
+
+stock_files_list <- list()
+for (i in four_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+# Produce WAP, Bid-Ask Spread, and num_order for each stock
+for (i in 1:length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>%
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1),
+           BidAskSpread = ask_price1 / bid_price1 - 1,
+           num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+}
+
+# Extract data into 2000 time minute buckets
+bucket_list <- list()
+for (j in 1:length(stock_files_list)) {
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (k in 1:length(time_IDs)) {
+    bucket <- stock_files_list[[j]] %>%
+      filter(time_id == time_IDs[k])
+    bucket_list[[length(bucket_list) + 1]] <- bucket
+  }
+}
+
+# Prepare a data frame from the buckets for clustering
+bucket_df <- data.frame(
+  mean_BAS = numeric(),
+  imbalance = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (i in seq_along(bucket_list)) {
+  stock <- bucket_list[[i]]
+  stock <- stock %>%
+    mutate(BidAskSpread = ask_price1 / bid_price1 - 1,
+           imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
+    summarise(
+      mean_BAS = mean(BidAskSpread),
+      imbalance = mean(imbalance)
+    )
+  bucket_df <- rbind(bucket_df, stock)
+}
+
+# Scale the features
+bucket_df_scaled <- bucket_df %>%
+  mutate(mean_BAS = (mean_BAS - min(mean_BAS)) / (max(mean_BAS) - min(mean_BAS)),
+         imbalance = (imbalance - min(imbalance)) / (max(imbalance) - min(imbalance)))
+
+# Clustering
+k <- 4
+km.out <- kmeans(bucket_df_scaled, centers = k, nstart = 20)
+
+# Add cluster assignments back to the bucket_df
+bucket_df$cluster <- km.out$cluster
+
+# To mimic the nested list output structure of the original code
+cluster_data_lists <- vector("list", k)
+for (j in 1:k) {
+  cluster_data_lists[[j]] <- bucket_list[bucket_df$cluster == j]
+}
+
+
+# Your ggplot code
+p <- ggplot(bucket_df, aes(x = mean_BAS, y = imbalance, color = as.factor(cluster))) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Cluster Plot of Mean WAP vs. Mean Bid-Ask Spread",
+       x = "Mean BAS",
+       y = "Imbalance",
+       color = "Cluster") +
+  theme_minimal()
+
+# Convert to an interactive plot
+ggplotly(p)
+```
+
+```{r, warning=FALSE}
+final_weight = list()
+for (a in 1 : length(cluster_data_lists)){
+  testlist = do.call(rbind, cluster_data_lists[[a]])
+  
+  #Hav-RV
+  log_r1 <- list()
+  time_IDs <- unique(testlist[, 1])
+  for (i in 1 : length(time_IDs)) {
+    sec <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+    price <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+    log_r <- log(price[-1] / price[1:(length(price) - 1)])
+    log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+    time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+    if (length(time.no.change) > 0) {
+      new.df <- data.frame(time = time.no.change, log_return = 0)
+      log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+      log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+    }
+  }
+  # Divide the 10-minute period into non-overlapping 30-second intervals and use the list to store the volatility of stock for each 30-second period in different time periods.
+  vol <- list()
+  comp_vol <- function(x) {
+    return(sqrt(sum(x ^ 2)))
+  }
+  for (i in 1 : length(log_r1)) {
+    log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+    vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
+    colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  
+  
+  
+  # Use the first 5 minutes of each 10-min time bucket for training data and the last 5 minutes for validation.
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1 : length(log_r1)) {
+    vol.train[[i]] <- vol[[i]][1:10, ]
+    vol.val[[i]] <- vol[[i]][-(1:5), ]
+  }
+  
+  len.train <- length(vol.train[[1]]$volatility)
+  list.HAV <- list()
+  
+  for (i in 1 : length(vol)) {
+    mean.vol <- rep(0, len.train - 5)
+    for (j in 1 : 5) {
+      mean.vol <- mean.vol + vol.train[[i]]$volatility[j : (j + len.train - 6)] / 5
+    }
+    list.HAV[[i]] <- data.frame(vol = vol.train[[i]]$volatility[-(1:5)], 
+                                vol_1 = vol.train[[i]]$volatility[5:(len.train - 1)],
+                                mean_vol_5 = mean.vol)
+  }
+  
+  # Fit the HAV model by using weighted least squares (WLS). For WLS, we use $w_t = \text{RV}_{t-1}/\sqrt{\text{RQ}_{t-1}}$ as the weight for each time period t.
+  quar <- list()
+  comp_quar <- function(x) {
+    return(length(x) / 3 * sum(x ^ 4))
+  }
+  for (i in 1 : length(log_r1)) {
+    quar[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_quar)
+    colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
+  }
+  
+  HAV.wls.models <- list()
+  
+  for (i in 1 : length(vol)) {
+    # weight.HAV <- 0
+    HAV.wls.models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, list.HAV[[i]],
+                              weights = list.HAV[[i]]$vol_1 / 
+                                sqrt(quar[[i]]$quarticity[5:(len.train - 1)]))
+  }
+  
+  # HAV-RV performs well for some time buckets
+  #summary(HAV.wls.models[[218]])
+  
+  pred.lm <- list()
+  
+  len.val <- length(vol.val[[1]]$volatility)
+  list.HAV1 <- list()
+  for (i in 1 : length(vol)) {
+    mean.vol <- rep(0, len.val - 5)
+    for (j in 1 : 5) {
+      mean.vol <- mean.vol + vol.val[[i]]$volatility[j : (j + len.val - 6)] / 5
+    }
+    list.HAV1[[i]] <- data.frame(vol = vol.val[[i]]$volatility[-(1:5)], 
+                                vol_1 = vol.val[[i]]$volatility[5:(len.val - 1)],
+                                mean_vol_5 = mean.vol)
+    pred.lm[[i]] <- predict(HAV.wls.models[[i]], newdata = list.HAV1[[i]])
+  }
+  
+  MSE.lm_1 <- vector()
+  QLIKE.lm <- vector()
+  for (i in 1 : length(vol)) {
+    MSE.lm_1 <- c(MSE.lm_1, mean((tail(vol.val[[i]]$volatility, 4) - pred.lm[[i]])^2))
+    QLIKE.lm <- c(QLIKE.lm, mean(tail(vol.val[[i]]$volatility, 4) / pred.lm[[i]] - log(tail(vol.val[[i]]$volatility, 4) / pred.lm[[i]]) - 1))
+  }
+  
+  #WLR
+  log_r1 <- list()
+  time_IDs <- unique(testlist[, 1])
+  for (i in 1 : length(time_IDs)) {
+    sec <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(seconds_in_bucket)
+    price <- testlist %>% filter(time_id == time_IDs[i]) %>% pull(WAP)
+    log_r <- log(price[-1] / price[1:(length(price) - 1)])
+    log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+    time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+    if (length(time.no.change) > 0) {
+      new.df <- data.frame(time = time.no.change, log_return = 0)
+      log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+      log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+    }
+  }
+  # Divide the 10-minute period into non-overlapping 30-second intervals and use the list to store the volatility of stock for each 30-second period in different time periods.
+  vol <- list()
+  comp_vol <- function(x) {
+    return(sqrt(sum(x ^ 2)))
+  }
+  for (i in 1 : length(log_r1)) {
+    log_r1[[i]] <- log_r1[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
+    vol[[i]] <- aggregate(log_return ~ time_bucket, data = log_r1[[i]], FUN = comp_vol)
+    colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1 : length(log_r1)) {
+    vol.train[[i]] <- vol[[i]][1:10, ]
+    vol.val[[i]] <- vol[[i]][-(1:10), ]
+  }
+  
+  list.reg <- list() # list for regression
+  testlist <- testlist %>% mutate(time_bucket = ceiling(seconds_in_bucket / 30),
+                              num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2)
+  len.train <- length(vol.train[[1]]$volatility)
+  
+  for (i in 1 : length(vol)) {
+    stats.bucket <- testlist %>% 
+      filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+      select(c(BidAskSpread, WAP, num_order, time_bucket)) 
+    # for each 30-sec time bucket, we compute the following statistics
+    mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+    list.reg[[i]] <- data.frame(volatility = vol.train[[i]]$volatility[-1], 
+                                price = mean.price$WAP[1:(len.train - 1)],
+                                order = mean.order$num_order[1:(len.train - 1)],
+                                BidAskSpread = mean.BAS$BidAskSpread[1:(len.train - 1)])
+  }
+  
+  lm.models <- list()
+  
+  for (i in 1 : length(vol)) {
+    lm.models[[i]] <- lm(volatility ~ price + order + BidAskSpread, list.reg[[i]],
+                         weights = 0.8 ^ (((len.train - 2):0) / 2))
+  }
+  
+  # for some periods, linear regression performs well
+  #summary(lm.models[[162]])
+  
+  list.reg.val <- list()
+  len.val <- length(vol.val[[1]]$volatility)
+  pred.lm2 <- list()
+  
+  for (i in 1 : length(vol)) {
+    stats.bucket <- testlist %>% 
+      filter(time_id == time_IDs[i] & time_bucket != 0) %>% 
+      select(c(BidAskSpread, WAP, num_order, time_bucket))
+    mean.price <- aggregate(WAP ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.order <- aggregate(num_order ~ time_bucket, data = stats.bucket, FUN = mean)
+    mean.BAS <- aggregate(BidAskSpread ~ time_bucket, data = stats.bucket, FUN = mean)
+    list.reg.val[[i]] <- 
+      data.frame(volatility = vol.val[[i]]$volatility, 
+                 price = mean.price$WAP[len.train:(len.train + len.val - 1)],
+                 order = mean.order$num_order[len.train:(len.train + len.val - 1)],
+                 BidAskSpread = mean.BAS$BidAskSpread[len.train:(len.train + len.val - 1)])
+    pred.lm2[[i]] <- predict(lm.models[[i]], newdata = list.reg.val[[i]])
+  }
+  
+  MSE.lm_2 <- vector()
+  QLIKE.lm_2 <- vector()
+  for (i in 1 : length(vol)) {
+    MSE.lm_2 <- c(MSE.lm_2, mean((vol.val[[i]]$volatility - pred.lm2[[i]]) ^ 2))
+    QLIKE.lm_2 <- c(QLIKE.lm_2, mean(vol.val[[i]]$volatility / pred.lm2[[i]] - 
+                                   log(vol.val[[i]]$volatility / pred.lm2[[i]]) - 1))
+  }
+  
+  #weight
+  standard = mean(MSE.lm_1)
+  final_weight_hav = 1
+  final_weight_wlr = 0
+  
+  weight_hav = 0.9
+  for (i in 1: 10){
+    weight_wlr = 1 - weight_hav
+    #mix
+    mix = vector("list", length = length(pred.lm))
+    for (i in 1:length(pred.lm)){
+      mix[[i]] = pred.lm[[i]]*weight_hav + pred.lm2[[i]]*weight_wlr
+    }
+    
+    MSE.lm <- vector()
+    QLIKE.lm <- vector()
+    for (i in 1 : length(vol)) {
+      MSE.lm <- c(MSE.lm, mean((vol.val[[i]]$volatility - mix[[i]]) ^ 2))
+      QLIKE.lm <- c(QLIKE.lm, mean(vol.val[[i]]$volatility / mix[[i]] - 
+                                     log(vol.val[[i]]$volatility / mix[[i]]) - 1))
+    }
+    mix_mean = mean(MSE.lm, na.rm = TRUE)
+    if (mix_mean < standard){
+      final_weight_hav = weight_hav
+      final_weight_wlr = weight_wlr
+      standard = mix_mean
+    }
+    
+    weight_hav = weight_hav - 0.1
+  }
+  
+  final_weight[[a]] = data.frame(final_weight_hav = final_weight_hav, 
+                                     final_weight_wlr = final_weight_wlr)
+}
+```
+
+```{r,warning=FALSE}
+#plot
+a = 1
+MSE_store = list()
+for (i in final_weight){
+  final_weight_hav = i$final_weight_hav
+  final_weight_wlr = i$final_weight_wlr
+  mix = vector("list", length = length(pred.lm))
+    for (i in 1:length(pred.lm)){
+      mix[[i]] = pred.lm[[i]]*final_weight_hav + pred.lm2[[i]]*final_weight_wlr
+    }
+    
+    MSE.lm <- vector()
+    QLIKE.lm <- vector()
+    for (i in 1 : length(vol)) {
+      MSE.lm <- c(MSE.lm, mean((vol.val[[i]]$volatility - mix[[i]]) ^ 2))
+      QLIKE.lm <- c(QLIKE.lm, mean(vol.val[[i]]$volatility / mix[[i]] - 
+                                     log(vol.val[[i]]$volatility / mix[[i]]) - 1))
+    }
+    MSE_store[[a]] =  MSE.lm
+    a = a + 1
+}
+```
+
+```{r}
+b = 1
+for (i in MSE_store){
+  var_name <- paste("p", b, sep = "")
+  plot_name <- paste("cluster", b, sep = " ")
+  data_df <- data.frame(values = i)
+  p <- ggplot(data_df, aes(x = values)) + geom_boxplot() + labs(title = plot_name, x = '', y = '') + theme(axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  assign(var_name, p)
+  b = b + 1
+}
+
+grid.arrange(p1, p2, p3, p4)
+```
