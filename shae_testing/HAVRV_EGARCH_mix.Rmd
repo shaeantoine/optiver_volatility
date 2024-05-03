@@ -19,6 +19,7 @@ all_stocks <- list.files(dir_stocks)
 # Select 5 stocks at random
 # THIS SHOULD BE CHANGED TO ENSURE CLASS BALANCE BETWEEN 4 CLUSTERS
 ```{r}
+
 set.seed(23542355)
 
 four_stocks <- sample(all_stocks, 4)
@@ -39,7 +40,9 @@ for (i in 1 : length(stock_files_list)) {
     mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) %>%
     mutate(BidAskSpread = ask_price1 / bid_price1 - 1) %>%
     mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) %>%
-    mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1))
+    mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(volume = (ask_size1 + bid_size1)) %>%
+    mutate(range = (ask_price1 - bid_price1))
 }
 
 ```
@@ -87,16 +90,16 @@ for (i in 1:length(bucket_list)) {
   cluster_data_lists[[cluster]][[length(cluster_data_lists[[cluster]]) + 1]] <- bucket_list[[i]]
 }
 
-length(cluster_data_lists[[3]])
+length(cluster_data_lists[[1]])
 
 ```
 
 # Stratifying into clusters
 ```{r results = 'hide'}
-c1 = do.call(rbind, cluster_data_lists[[1]])
-c2 = do.call(rbind, cluster_data_lists[[2]])
-c3 = do.call(rbind, cluster_data_lists[[3]])
-c4 = do.call(rbind, cluster_data_lists[[4]])
+# c1 = do.call(rbind, cluster_data_lists[[1]])
+# c2 = do.call(rbind, cluster_data_lists[[2]])
+# c3 = do.call(rbind, cluster_data_lists[[3]])
+# c4 = do.call(rbind, cluster_data_lists[[4]])
 ```
 
 
@@ -242,7 +245,7 @@ for (j in 1:4) {
   cluster_GARCH_models[[j]] <- ARMA_GARCH.models
 }
 
-length(as.list(coef(cluster_GARCH_models[[1]][[103]])))
+length(as.list(coef(cluster_GARCH_models[[4]][[103]])))
 
 ```
 
@@ -334,11 +337,11 @@ for (j in 1:4) {
 }
 
 for (j in 1:4) {
-  boxplot(all_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00001))
+  boxplot(all_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00003))
 }
 
 for (j in 1:4) {
-  boxplot(all_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 5))
+  boxplot(all_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 3))
 }
 
 ```
@@ -690,7 +693,7 @@ for (j in 1:4) {
 # MSE 
 MSE_performance <- data.frame(
   Cluster = rep(paste0("Cluster", 1:4), each = 3),
-  Model = rep(c("HAV-RV", "eGARCH", "HAV-RV/eGARCH"), 4),
+  Model = rep(c("HAV-RV", "eGARCH", "HAV-GAR"), 4),
   MSE = c(cluster_MSE_hav[[1]], cluster_MSE_gar[[1]], cluster_MSE_mix[[1]],
           cluster_MSE_hav[[2]], cluster_MSE_gar[[2]], cluster_MSE_mix[[2]],
           cluster_MSE_hav[[3]], cluster_MSE_gar[[3]], cluster_MSE_mix[[3]],
@@ -700,7 +703,7 @@ MSE_performance <- data.frame(
 # Create data frame for QLIKE
 QLIKE_performance <- data.frame(
   Cluster = rep(paste0("Cluster", 1:4), each = 3),
-  Model = rep(c("HAV-RV", "eGARCH", "HAV-RV/eGARCH"), 4),
+  Model = rep(c("HAV-RV", "eGARCH", "HAV-GAR"), 4),
   QLIKE = c(cluster_QLIKE_hav[[1]], cluster_QLIKE_gar[[1]], cluster_QLIKE_mix[[1]],
             cluster_QLIKE_hav[[2]], cluster_QLIKE_gar[[2]], cluster_QLIKE_mix[[2]],
             cluster_QLIKE_hav[[3]], cluster_QLIKE_gar[[3]], cluster_QLIKE_mix[[3]],
@@ -717,11 +720,11 @@ par(mfrow = c(2, 2))
 
 MSE_combined <- rbind(MSE_performance[MSE_performance$Model == "HAV-RV", ],
                       MSE_performance[MSE_performance$Model == "eGARCH", ],
-                      MSE_performance[MSE_performance$Model == "Mixture", ])
+                      MSE_performance[MSE_performance$Model == "HAV-GAR", ])
 
 QLIKE_combined <- rbind(QLIKE_performance[QLIKE_performance$Model == "HAV-RV", ],
                        QLIKE_performance[QLIKE_performance$Model == "eGARCH", ],
-                       QLIKE_performance[QLIKE_performance$Model == "Mixture", ])
+                       QLIKE_performance[QLIKE_performance$Model == "HAV-GAR", ])
 
 # Combined MSE plot
 for (cluster in 1:4) {
