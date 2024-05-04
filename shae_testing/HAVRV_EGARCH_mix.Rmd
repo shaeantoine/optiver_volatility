@@ -42,7 +42,8 @@ for (i in 1 : length(stock_files_list)) {
     mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) %>%
     mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
     mutate(volume = (ask_size1 + bid_size1)) %>%
-    mutate(range = (ask_price1 - bid_price1))
+    mutate(range = (ask_price1 - bid_price1)) %>%
+    mutate(rush = (bid_size1*bid_price1)/(ask_size1*ask_price1))
 }
 
 ```
@@ -60,7 +61,7 @@ for (j in 1 : length(stock_files_list)) {
   }
 }
 
-bucket_list[[2000]]
+bucket_list[[2000]]$rush
 
 ```
 
@@ -68,9 +69,11 @@ bucket_list[[2000]]
 # this produces a nested list of time buckets for each cluster
 ```{r results = 'hide'}
 
+bucket_list[[1]][c("imbalance", "WAP", "rush")]
+
 bucket_bas <- list()
 for (i in 1 : length(bucket_list)) {
-  bas <- bucket_list[[i]] %>% pull(BidAskSpread, imbalance)
+  bas <- bucket_list[[i]] %>% dplyr::pull(WAP, imbalance) #, rush)
   bucket_bas[[i]] <- mean(bas)
 }
 
@@ -94,85 +97,8 @@ length(cluster_data_lists[[1]])
 
 ```
 
-# Stratifying into clusters
-```{r results = 'hide'}
-# c1 = do.call(rbind, cluster_data_lists[[1]])
-# c2 = do.call(rbind, cluster_data_lists[[2]])
-# c3 = do.call(rbind, cluster_data_lists[[3]])
-# c4 = do.call(rbind, cluster_data_lists[[4]])
-```
-
-
-# Building functions for cluster log returns and volatility calculations
-# This is far less efficient that nested for loops on indexes idk why
-```{r results = 'hide'}
-
-# Compute volatility
-# comp_vol <- function(x) {
-#   return(sqrt(sum(x ^ 2)))
-# }
-
-# Compute cluster log returns
-# Takes in a time bucket data frame as input
-# SOMETHING IS WRONG HERE - DO NOT USE
-# comp_cluster_logr <- function(x) {
-#   stock_ids <- unique(x %>% pull(stock_id)) 
-#   
-#   for (stock_id in stock_ids) {
-#     x_filter <- x %>% filter(stock_id == stock_id)
-#     unique_time_IDs <- unique(x_filter[, 1])
-# 
-#     for (time_id in unique_time_IDs) {
-#       if (time_id %% 10 == 0) {
-#         print(time_id)
-#       }
-#       sec <- x_filter %>% filter(time_id == time_id) %>% pull(seconds_in_bucket)
-#       price <- x_filter %>% filter(time_id == time_id) %>% pull(WAP)
-#       log_r <- log(price[-1] / price[1:(length(price) - 1)])
-#       log_r1[[length(log_r1) + 1]] <- data.frame(time = sec[-1], log_return = log_r)
-#       time.no.change <- (1:600)[!(1:600 %in% log_r1[[length(log_r1)]]$time)]
-#       if (length(time.no.change) > 0) {
-#         new.df <- data.frame(time = time.no.change, log_return = 0)
-#         log_r1[[length(log_r1)]] <- rbind(log_r1[[length(log_r1)]], new.df)
-#         log_r1[[length(log_r1)]] <- log_r1[[length(log_r1)]][order(log_r1[[length(log_r1)]]$time), ]
-#       }
-#     }
-#   }
-#   
-#   return(log_r1)
-# }
-
-# # Compute cluster volatility
-# # Takes in log returns data frame as input
-# comp_cluster_vol <- function(x) {
-#   for (i in 1 : length(x)) {
-#     x[[i]] <- x[[i]] %>% mutate(time_bucket = ifelse(time == 0,1,ceiling(time / 30)))
-#     vol[[i]] <- aggregate(log_return ~ time_bucket, data = x[[i]], FUN = comp_vol)
-#     colnames(vol[[i]]) <- c('time_bucket', 'volatility')
-#   }
-#   return(vol)
-# }
-# 
-# log_r1 <- list()
-# log_r2 <- list()
-# log_r3 <- list()
-# log_r4 <- list()
-# 
-# log_r1[[23]] = comp_cluster_logr(c1)
-# log_r2 = comp_cluster_logr(c2)
-# log_r3 = comp_cluster_logr(c3)
-# log_r4 = comp_cluster_logr(c4)
-# 
-# vol1 <- list()
-# vol2 <- list()
-# vol3 <- list()
-# vol4 <- list()
-# 
-# vol1 = comp_cluster_vol(log_r1)
-# vol2 = comp_cluster_vol(log_r2)
-# vol3 = comp_cluster_vol(log_r3)
-# vol4 = comp_cluster_vol(log_r4)
-
+```{r}
+bas
 ```
 
 
@@ -690,67 +616,110 @@ for (j in 1:4) {
   cluster_QLIKE_mix[[j]] <- QLIKE.mix
 }
 
-# MSE 
-MSE_performance <- data.frame(
-  Cluster = rep(paste0("Cluster", 1:4), each = 3),
-  Model = rep(c("HAV-RV", "eGARCH", "HAV-GAR"), 4),
-  MSE = c(cluster_MSE_hav[[1]], cluster_MSE_gar[[1]], cluster_MSE_mix[[1]],
-          cluster_MSE_hav[[2]], cluster_MSE_gar[[2]], cluster_MSE_mix[[2]],
-          cluster_MSE_hav[[3]], cluster_MSE_gar[[3]], cluster_MSE_mix[[3]],
-          cluster_MSE_hav[[4]], cluster_MSE_gar[[4]], cluster_MSE_mix[[4]])
-)
+```
+
+
+
+```{r}
+
+# Create a vector to store QLIKE values for each cluster
+QLIKE_values <- c(cluster_QLIKE_hav[[1]], cluster_QLIKE_gar[[1]], cluster_QLIKE_mix[[1]],
+                  cluster_QLIKE_hav[[2]], cluster_QLIKE_gar[[2]], cluster_QLIKE_mix[[2]],
+                  cluster_QLIKE_hav[[3]], cluster_QLIKE_gar[[3]], cluster_QLIKE_mix[[3]],
+                  cluster_QLIKE_hav[[4]], cluster_QLIKE_gar[[4]], cluster_QLIKE_mix[[4]])
+
+# Create a vector to store the corresponding cluster names for each QLIKE value
+cluster_names <- c(rep("Cluster1", length(cluster_QLIKE_hav[[1]])*3),
+                   rep("Cluster2", length(cluster_QLIKE_hav[[2]])*3),
+                   rep("Cluster3", length(cluster_QLIKE_hav[[3]])*3),
+                   rep("Cluster4", length(cluster_QLIKE_hav[[4]])*3))
+
+model_names <- c(rep("HAV-RV", length(cluster_QLIKE_hav[[1]])),
+                 rep("eGARCH", length(cluster_QLIKE_hav[[1]])),
+                 rep("HAV-GAR", length(cluster_QLIKE_hav[[1]])),
+                 rep("HAV-RV", length(cluster_QLIKE_hav[[2]])),
+                 rep("eGARCH", length(cluster_QLIKE_hav[[2]])),
+                 rep("HAV-GAR", length(cluster_QLIKE_hav[[2]])),
+                 rep("HAV-RV", length(cluster_QLIKE_hav[[3]])),
+                 rep("eGARCH", length(cluster_QLIKE_hav[[3]])),
+                 rep("HAV-GAR", length(cluster_QLIKE_hav[[3]])),
+                 rep("HAV-RV", length(cluster_QLIKE_hav[[4]])),
+                 rep("eGARCH", length(cluster_QLIKE_hav[[4]])),
+                 rep("HAV-GAR", length(cluster_QLIKE_hav[[4]])))
 
 # Create data frame for QLIKE
 QLIKE_performance <- data.frame(
-  Cluster = rep(paste0("Cluster", 1:4), each = 3),
-  Model = rep(c("HAV-RV", "eGARCH", "HAV-GAR"), 4),
-  QLIKE = c(cluster_QLIKE_hav[[1]], cluster_QLIKE_gar[[1]], cluster_QLIKE_mix[[1]],
-            cluster_QLIKE_hav[[2]], cluster_QLIKE_gar[[2]], cluster_QLIKE_mix[[2]],
-            cluster_QLIKE_hav[[3]], cluster_QLIKE_gar[[3]], cluster_QLIKE_mix[[3]],
-            cluster_QLIKE_hav[[4]], cluster_QLIKE_gar[[4]], cluster_QLIKE_mix[[4]])
+  Cluster = cluster_names,
+  Model = model_names,
+  QLIKE = QLIKE_values
 )
 
-MSE_performance
+```
+
+```{r}
+# Create a vector to store QLIKE values for each cluster
+MSE_values <- c(cluster_MSE_hav[[1]], cluster_MSE_gar[[1]], cluster_MSE_mix[[1]],
+                cluster_MSE_hav[[2]], cluster_MSE_gar[[2]], cluster_MSE_mix[[2]],
+                cluster_MSE_hav[[3]], cluster_MSE_gar[[3]], cluster_MSE_mix[[3]],
+                cluster_MSE_hav[[4]], cluster_MSE_gar[[4]], cluster_MSE_mix[[4]])
+
+# Create a vector to store the corresponding cluster names for each QLIKE value
+cluster_names <- c(rep("Cluster1", length(cluster_MSE_hav[[1]])*3),
+                   rep("Cluster2", length(cluster_MSE_hav[[2]])*3),
+                   rep("Cluster3", length(cluster_MSE_hav[[3]])*3),
+                   rep("Cluster4", length(cluster_MSE_hav[[4]])*3))
+
+model_names <- c(rep("HAV-RV", length(cluster_MSE_hav[[1]])),
+                 rep("eGARCH", length(cluster_MSE_hav[[1]])),
+                 rep("HAV-GAR", length(cluster_MSE_hav[[1]])),
+                 rep("HAV-RV", length(cluster_MSE_hav[[2]])),
+                 rep("eGARCH", length(cluster_MSE_hav[[2]])),
+                 rep("HAV-GAR", length(cluster_MSE_hav[[2]])),
+                 rep("HAV-RV", length(cluster_MSE_hav[[3]])),
+                 rep("eGARCH", length(cluster_MSE_hav[[3]])),
+                 rep("HAV-GAR", length(cluster_MSE_hav[[3]])),
+                 rep("HAV-RV", length(cluster_MSE_hav[[4]])),
+                 rep("eGARCH", length(cluster_MSE_hav[[4]])),
+                 rep("HAV-GAR", length(cluster_MSE_hav[[4]])))
+
+# Create data frame for QLIKE
+MSE_performance <- data.frame(
+  Cluster = cluster_names,
+  Model = model_names,
+  MSE = MSE_values
+)
 ```
 
 # Final Boxplots
 ```{r}
 
 par(mfrow = c(2, 2))
-
-MSE_combined <- rbind(MSE_performance[MSE_performance$Model == "HAV-RV", ],
-                      MSE_performance[MSE_performance$Model == "eGARCH", ],
-                      MSE_performance[MSE_performance$Model == "HAV-GAR", ])
-
-QLIKE_combined <- rbind(QLIKE_performance[QLIKE_performance$Model == "HAV-RV", ],
-                       QLIKE_performance[QLIKE_performance$Model == "eGARCH", ],
-                       QLIKE_performance[QLIKE_performance$Model == "HAV-GAR", ])
+model_colors <- c("HAV-RV" = "skyblue", "eGARCH" = "lightgreen", "HAV-GAR" = "lightpink")
 
 # Combined MSE plot
-for (cluster in 1:4) {
-  MSE_combined_filtered <- subset(MSE_combined, Cluster == paste0("Cluster", cluster))
-  
-  boxplot(MSE ~ Model, data = MSE_combined_filtered, 
-          main = paste("Cluster", cluster, "MSE Comparison"),
-          ylab = "MSE",
-          col = c("skyblue", "lightgreen", "lightpink"),
-          border = "black",
-          outline = FALSE) 
-}
+ggplot(MSE_performance, aes(x = Model, y = MSE, fill = Model)) +
+  geom_boxplot() +
+  # geom_violin(trim = FALSE, scale = "width") +  # Violin plots without trimming
+  # geom_jitter(shape = 16, position = position_jitter(0.2), alpha = 0.5) +
+  facet_wrap(~ Cluster) +
+  scale_fill_manual(values = model_colors) +
+  labs(title = "MSE Performance by Model and Cluster", x = "Model", y = "MSE Score") +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 0.00001))
 
 # Combined QLIKE plot
-for (cluster in 1:4) {
-  QLIKE_combined_filtered <- subset(QLIKE_combined, Cluster == paste0("Cluster", cluster))
-  
-  boxplot(QLIKE ~ Model, data = QLIKE_combined_filtered, 
-          main = paste("Cluster", cluster, "QLIKE Comparison"),
-          ylab = "QLIKE",
-          col = c("skyblue", "lightgreen", "lightpink"),
-          border = "black",
-          outline = FALSE)  
-}
+ggplot(QLIKE_performance, aes(x = Model, y = QLIKE, fill = Model)) +
+  geom_boxplot() +
+  # geom_violin(trim = FALSE, scale = "width") +  # Violin plots without trimming
+  # geom_jitter(shape = 16, position = position_jitter(0.2), alpha = 0.5) +
+  facet_wrap(~ Cluster) +
+  scale_fill_manual(values = model_colors) +
+  labs(title = "QLIKE Performance by Model and Cluster", x = "Model", y = "QLIKE Score") +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 2))
 
 ```
+
 
 
 

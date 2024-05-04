@@ -1,0 +1,180 @@
+---
+title: "Clustering"
+format:
+  html:
+    toc: true
+    embed-resources: true
+    self-contained-math: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+set.seed(3888)
+```
+
+```{r}
+library(tidyverse)
+library(scatterplot3d)
+library(plotly)
+```
+
+### Load data
+
+```{r}
+dir.short <- "~/Documents/DATA3888/optiver_volatility/data/individual_book_train/"
+all.files.short <- list.files(dir.short)
+
+raw_df_cl = data.frame(name = character(),
+                       time_id = numeric(),
+                       mean_BAS = numeric(),
+                       mean_WAP = numeric(),
+                       imbalance = numeric(),
+                       volume = numeric(),
+                       range = numeric(),
+                       num_order = numeric(),
+                       rush = numeric(),
+                       stringsAsFactors = FALSE)
+
+for (i in all.files.short) {
+  stock = read.csv(file.path(dir.short, i))
+  
+  # randomly select time_ids from stock
+  time_ids = sample(unique(stock$time_id), 10)
+  
+  file_name = gsub("stock_", "", (gsub(".csv", "", i)))
+  
+  stock = stock |> 
+      filter(time_id %in% time_ids) |>
+      mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) |>
+      mutate(BidAskSpread = ask_price1 / bid_price1 - 1) |>
+      mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) |>
+      mutate(volume = (ask_size1 + bid_size1)) |>
+      mutate(range = (ask_price1 - bid_price1)) |>
+      mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) |>
+      mutate(rush = (bid_size1*bid_price1)/(ask_size1*ask_price1)) |> # Made up
+      group_by(time_id) |>
+      summarise(mean_BAS = mean(BidAskSpread),
+                mean_WAP = mean(WAP),
+                imbalance = mean(imbalance),
+                volume = mean(volume),
+                range = mean(range),
+                num_order = mean(num_order),
+                rush = mean(rush)) |>
+      mutate(file_name = file_name) 
+  
+  raw_df_cl = rbind(raw_df_cl, stock)
+  
+  print(file_name)
+
+}
+```
+
+## Apply clustering
+
+```{r}
+library(caret)
+
+df_cl = raw_df_cl
+
+df_cl$mean_BAS <- as.vector(scale(df_cl$mean_BAS, center = min(df_cl$mean_BAS), scale = max(df_cl$mean_BAS) - min(df_cl$mean_BAS)))
+df_cl$mean_WAP = as.vector(scale(df_cl$mean_WAP, center = min(df_cl$mean_WAP), scale = max(df_cl$mean_WAP) - min(df_cl$mean_WAP)))
+df_cl$imbalance = as.vector(scale(df_cl$imbalance, center = min(df_cl$imbalance), scale = max(df_cl$imbalance) - min(df_cl$imbalance)))
+df_cl$volume = as.vector(scale(df_cl$volume, center = min(df_cl$volume), scale = max(df_cl$volume) - min(df_cl$volume)))
+df_cl$range = as.vector(scale(df_cl$range, center = min(df_cl$range), scale = max(df_cl$range) - min(df_cl$range)))
+df_cl$num_order = as.vector(scale(df_cl$num_order, center = min(df_cl$num_order), scale = max(df_cl$num_order) - min(df_cl$num_order)))
+df_cl$rush = as.vector(scale(df_cl$rush, center = min(df_cl$rush), scale = max(df_cl$rush) - min(df_cl$rush)))
+
+df_cl$file_name = as.numeric(df_cl$file_name)
+df_cl = df_cl[order(df_cl$file_name),]
+df_cl$name = paste(df_cl$file_name, df_cl$time_id, sep = " ")
+
+df_cl = df_cl |>
+    filter(file_name != 31) |>
+    select(-time_id, -file_name)
+# |>
+#     select(-mean_WAP)
+
+# df_cl <- df_cl[c("name", "mean_BAS", "imbalance", "volume", "range", "num_order")]
+# df_cl <- df_cl[c("name", "mean_BAS", "volume")] #Sucks
+# df_cl <- df_cl[c("name", "mean_BAS", "imbalance")] #Sucks
+# df_cl <- df_cl[c("name", "mean_BAS", "range")] # Very linear and not differentiated
+# df_cl <- df_cl[c("name", "mean_BAS", "num_order")] # Same problem with bas, volume - L like distribution
+# df_cl <- df_cl[c("name", "imbalance", "mean_WAP")] # Much more interesting but not quite the seperation we need
+# df_cl <- df_cl[c("name", "imbalance", "volume")] # Much more interesting but not quite the seperation we need
+# df_cl <- df_cl[c("name", "imbalance", "range")] # Best so far but still have significant grouping
+# df_cl <- df_cl[c("name", "imbalance", "num_order")] # Very similar to imbalance, volume not great
+# df_cl <- df_cl[c("name", "volume", "range")] # Very not good L like but super clumped
+# df_cl <- df_cl[c("name", "volume", "num_order")] # Linear but clumped - v bad
+# df_cl <- df_cl[c("name", "range", "num_order")]
+
+
+
+
+```
+
+# Both of these had the most differentiation 
+```{r}
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "num_order")]
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
+```
+
+
+### Cluster with k = 4
+```{r}
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
+
+km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
+
+df = data.frame(
+    names = df_cl$name,
+    imbalance = df_cl$imbalance,
+    mean_WAP = df_cl$mean_WAP,
+    rush = df_cl$rush,
+    cluster = factor(km.out$cluster)
+)
+
+# plot = ggplot(df, aes(x = volume, y = imbalance, z = wap, color = cluster, label = names)) + 
+#   geom_point() + 
+#   geom_text(aes(label=names), vjust = -1, hjust = 1) +
+#   theme_minimal() +
+#   labs(title = "Cluster Plot", x = "volume", y = "imbalance")
+# 
+# ggplotly(plot)
+
+plot_ly(x = df$imbalance, y = df$mean_WAP, z = df$rush, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
+
+```
+
+```{r}
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "mean_BAS")] 
+
+km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
+
+df = data.frame(
+    names = df_cl$name,
+    imbalance = df_cl$imbalance,
+    mean_WAP = df_cl$mean_WAP,
+    mean_BAS = df_cl$mean_BAS,
+    cluster = factor(km.out$cluster)
+)
+
+# plot = ggplot(df, aes(x = volume, y = imbalance, z = wap, color = cluster, label = names)) + 
+#   geom_point() + 
+#   geom_text(aes(label=names), vjust = -1, hjust = 1) +
+#   theme_minimal() +
+#   labs(title = "Cluster Plot", x = "volume", y = "imbalance")
+# 
+# ggplotly(plot)
+
+plot_ly(x = df$imbalance, y = df$mean_WAP, z = df$mean_BAS, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
+
+```
+
+
+
+# Top variable contenders
+imbalance/ WAP
+df$imbalance, y = df$range, z = df$wap - BAD
+
+# Y is not good!!
