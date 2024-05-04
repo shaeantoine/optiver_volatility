@@ -20,7 +20,7 @@ all_stocks <- list.files(dir_stocks)
 # THIS SHOULD BE CHANGED TO ENSURE CLASS BALANCE BETWEEN 4 CLUSTERS
 ```{r}
 
-set.seed(23542355)
+set.seed(32432)
 
 four_stocks <- sample(all_stocks, 4)
 
@@ -69,16 +69,19 @@ bucket_list[[2000]]$rush
 # this produces a nested list of time buckets for each cluster
 ```{r results = 'hide'}
 
-bucket_list[[1]][c("imbalance", "WAP", "rush")]
-
-bucket_bas <- list()
+bucket_values <- list()
 for (i in 1 : length(bucket_list)) {
-  bas <- bucket_list[[i]] %>% dplyr::pull(WAP, imbalance) #, rush)
-  bucket_bas[[i]] <- mean(bas)
+  # bas <- bucket_list[[i]] %>% dplyr::pull(WAP, imbalance) #, rush)
+  # bucket_bas[[i]] <- mean(bas)
+  
+  bucket_values[[i]] <- colMeans(bucket_list[[i]][, c("WAP", "imbalance", "rush")])
 }
 
-km.out <- kmeans(bucket_bas, centers = 4, nstart = 20)
+bucket_values_df <- do.call(rbind, bucket_values)
+bucket_values_df <- data.frame(df, row.names = NULL)
+colnames(bucket_values_df) <- c("WAP", "imbalance", "rush")
 
+km.out <- kmeans(bucket_values_df, centers = 4, nstart = 20)
 
 cluster_data_lists <- list()
 clusters <- list()
@@ -93,13 +96,10 @@ for (i in 1:length(bucket_list)) {
   cluster_data_lists[[cluster]][[length(cluster_data_lists[[cluster]]) + 1]] <- bucket_list[[i]]
 }
 
-length(cluster_data_lists[[1]])
+length(cluster_data_lists[[4]])
 
 ```
 
-```{r}
-bas
-```
 
 
 # Deriving the log returns for each time bucket
