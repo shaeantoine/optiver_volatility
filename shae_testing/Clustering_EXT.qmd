@@ -70,6 +70,14 @@ for (i in all.files.short) {
 }
 ```
 
+```{r}
+# boxplot(df_cl$mean_WAP)
+# boxplot(df_cl$imbalance)
+boxplot(sqrt(df_cl$rush))
+
+```
+
+
 ## Apply clustering
 
 ```{r}
@@ -77,13 +85,14 @@ library(caret)
 
 df_cl = raw_df_cl
 
-df_cl$mean_BAS <- as.vector(scale(df_cl$mean_BAS, center = min(df_cl$mean_BAS), scale = max(df_cl$mean_BAS) - min(df_cl$mean_BAS)))
-df_cl$mean_WAP = as.vector(scale(df_cl$mean_WAP, center = min(df_cl$mean_WAP), scale = max(df_cl$mean_WAP) - min(df_cl$mean_WAP)))
-df_cl$imbalance = as.vector(scale(df_cl$imbalance, center = min(df_cl$imbalance), scale = max(df_cl$imbalance) - min(df_cl$imbalance)))
-df_cl$volume = as.vector(scale(df_cl$volume, center = min(df_cl$volume), scale = max(df_cl$volume) - min(df_cl$volume)))
-df_cl$range = as.vector(scale(df_cl$range, center = min(df_cl$range), scale = max(df_cl$range) - min(df_cl$range)))
-df_cl$num_order = as.vector(scale(df_cl$num_order, center = min(df_cl$num_order), scale = max(df_cl$num_order) - min(df_cl$num_order)))
-df_cl$rush = as.vector(scale(df_cl$rush, center = min(df_cl$rush), scale = max(df_cl$rush) - min(df_cl$rush)))
+
+# df_cl$mean_BAS <- as.vector(scale(df_cl$mean_BAS, center = min(df_cl$mean_BAS), scale = max(df_cl$mean_BAS) - min(df_cl$mean_BAS)))
+# df_cl$mean_WAP = as.vector(scale(df_cl$mean_WAP, center = min(df_cl$mean_WAP), scale = max(df_cl$mean_WAP) - min(df_cl$mean_WAP)))
+# df_cl$imbalance = as.vector(scale(df_cl$imbalance, center = min(df_cl$imbalance), scale = max(df_cl$imbalance) - min(df_cl$imbalance)))
+# df_cl$volume = as.vector(scale(df_cl$volume, center = min(df_cl$volume), scale = max(df_cl$volume) - min(df_cl$volume)))
+# df_cl$range = as.vector(scale(df_cl$range, center = min(df_cl$range), scale = max(df_cl$range) - min(df_cl$range)))
+# df_cl$num_order = as.vector(scale(df_cl$num_order, center = min(df_cl$num_order), scale = max(df_cl$num_order) - min(df_cl$num_order)))
+# df_cl$rush = as.vector(scale(df_cl$rush, center = min(df_cl$rush), scale = max(df_cl$rush) - min(df_cl$rush)))
 
 df_cl$file_name = as.numeric(df_cl$file_name)
 df_cl = df_cl[order(df_cl$file_name),]
@@ -91,7 +100,7 @@ df_cl$name = paste(df_cl$file_name, df_cl$time_id, sep = " ")
 
 df_cl = df_cl |>
     filter(file_name != 31) |>
-    select(-time_id, -file_name)
+    dplyr::select(-time_id, -file_name)
 # |>
 #     select(-mean_WAP)
 
@@ -123,6 +132,10 @@ df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")]
 ### Cluster with k = 4
 ```{r}
 df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
+df_cl$rush = sqrt(df_cl$rush)
+df_cl$mean_WAP = log(df_cl$mean_WAP)
+# df_cl$imbalance = log(df_cl$imbalance)
+
 
 km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
 

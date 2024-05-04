@@ -7,6 +7,7 @@ date: "2024-04-28"
 ```{r}
 library(dplyr)
 library(rugarch)
+library(ggplot2)
 ```
 
 
@@ -78,7 +79,7 @@ for (i in 1 : length(bucket_list)) {
 }
 
 bucket_values_df <- do.call(rbind, bucket_values)
-bucket_values_df <- data.frame(df, row.names = NULL)
+bucket_values_df <- data.frame(bucket_values_df, row.names = NULL)
 colnames(bucket_values_df) <- c("WAP", "imbalance", "rush")
 
 km.out <- kmeans(bucket_values_df, centers = 4, nstart = 20)
@@ -171,9 +172,10 @@ for (j in 1:4) {
   cluster_GARCH_models[[j]] <- ARMA_GARCH.models
 }
 
-length(as.list(coef(cluster_GARCH_models[[4]][[103]])))
+# length(as.list(coef(cluster_GARCH_models[[4]][[103]])))
 
 ```
+
 
 ```{r results = 'hide'}
 
@@ -208,7 +210,7 @@ for (j in 1:4) {
   cluster_rv_pred[[j]] <- RV.pred
 }
 
-plot(cluster_rv_pred[[4]][[77]])
+# plot(cluster_rv_pred[[4]][[77]])
 
 ```
 
@@ -290,8 +292,8 @@ for (j in 1:4) {
   cluster_vol.val[[j]] <- vol.val
 }
 
-cluster_vol.train[[3]][[10]]
-cluster_vol.val[[2]][[10]]
+# cluster_vol.train[[3]][[10]]
+# cluster_vol.val[[2]][[10]]
 ```
 
 # This is going to derive volatility, volatility at past time period and the mean voltaility over the past 5
@@ -317,8 +319,8 @@ for (j in 1:4) {
   list_HAV_cluster[[j]] <- list_HAV
 }
 
-list_HAV_cluster[[3]][[10]]
-cluster_vol.train[[3]][[10]]
+# list_HAV_cluster[[3]][[10]]
+# cluster_vol.train[[3]][[10]]
 
 ```
 
@@ -338,8 +340,8 @@ for (j in 1:4) {
   cluster_quar[[j]] <- quar
 }
 
-cluster_quar[[3]][[10]]
-cluster_quar[[2]][[10]]
+# cluster_quar[[3]][[10]]
+# cluster_quar[[2]][[10]]
 ```
 
 # Is there a reason we're only using WLS? Is this an intentional decision? 
@@ -359,8 +361,8 @@ for (j in 1:4) {
   list_HAV_wls_cluster[[j]] <- HAV_wls_models
 }
 
-list_HAV_wls_cluster[[3]][[1]]
-list_HAV_wls_cluster[[2]][[1]]
+# list_HAV_wls_cluster[[3]][[1]]
+# list_HAV_wls_cluster[[2]][[1]]
 ```
 
 # I am getting an error generated here
@@ -443,7 +445,7 @@ for (j in 1:4) {
   cluster_pred_lm[[j]] <- latest_obs
 }
 
-cluster_pred_lm[[4]][[2]]
+# cluster_pred_lm[[4]][[2]]
 
 ```
 
