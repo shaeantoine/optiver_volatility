@@ -21,7 +21,7 @@ all_stocks <- list.files(dir_stocks)
 # THIS SHOULD BE CHANGED TO ENSURE CLASS BALANCE BETWEEN 4 CLUSTERS
 ```{r}
 
-set.seed(32432)
+set.seed(87)
 
 four_stocks <- sample(all_stocks, 4)
 
@@ -80,7 +80,9 @@ for (i in 1 : length(bucket_list)) {
 
 bucket_values_df <- do.call(rbind, bucket_values)
 bucket_values_df <- data.frame(bucket_values_df, row.names = NULL)
-colnames(bucket_values_df) <- c("WAP", "imbalance", "rush")
+# colnames(bucket_values_df) <- c("WAP", "imbalance", "rush")
+colnames(bucket_values_df) <- c("WAP", "imbalance", "BidAskSpread")
+
 
 km.out <- kmeans(bucket_values_df, centers = 4, nstart = 20)
 

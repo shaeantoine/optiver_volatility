@@ -132,8 +132,8 @@ df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")]
 ### Cluster with k = 4
 ```{r}
 df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
-df_cl$rush = sqrt(df_cl$rush)
-df_cl$mean_WAP = log(df_cl$mean_WAP)
+df_cl$rush = log(sqrt(df_cl$rush))
+# df_cl$mean_WAP = log(df_cl$mean_WAP)
 # df_cl$imbalance = log(df_cl$imbalance)
 
 
