@@ -1,5 +1,5 @@
 ---
-title: "SVR_EGARCH_mix"
+title: "HAV-RV_EGARCH_mix"
 output: html_document
 date: "2024-04-28"
 ---
@@ -107,7 +107,7 @@ length(cluster_data_lists[[4]])
 
 # Deriving the log returns for each time bucket
 ```{r results = 'hide'}
-# Multiple time bucket approch - on all clusters
+# Multiple time bucket approach - on all clusters
 
 cluster_log_r1 <- list()
 for (j in 1 : 4) {

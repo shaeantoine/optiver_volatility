@@ -1,0 +1,635 @@
+---
+title: "HAV-GAR-WLR-fullmix"
+output: html_document
+date: "2024-05-05"
+---
+
+```{r}
+library(dplyr)
+library(rugarch)
+library(ggplot2)
+```
+
+# Initial Data Loading
+## Loading in all of the stock CSV files from the main dataset
+```{r}
+dir_stocks <- "~/Documents/DATA3888/optiver_volatility/data/individual_book_train/"
+all_stocks <- list.files(dir_stocks)
+```
+
+## Sampling four random stocks from the stock list and reading in those files
+```{r}
+set.seed(87)
+four_stocks <- sample(all_stocks, 4)
+
+stock_files_list <- list()
+for (i in four_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+```
+
+## Peform additional transformations to derive desired variables for each stock
+```{r}
+
+for (i in 1 : length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>% 
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(BidAskSpread = ask_price1 / bid_price1 - 1) %>%
+    mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) %>%
+    mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(volume = (ask_size1 + bid_size1)) %>%
+    mutate(range = (ask_price1 - bid_price1)) %>%
+    mutate(rush = (bid_size1*bid_price1)/(ask_size1*ask_price1))
+}
+
+```
+
+## Taking the first 500 time ids of each stock
+```{r}
+
+bucket_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (i in 1 : length(time_IDs)) {
+    bucket <- stock_files_list[[j]] %>% filter(time_id == time_IDs[i])
+    bucket_list[[length(bucket_list) + 1]] <- bucket
+  }
+}
+
+bucket_list[[2000]]
+
+```
+
+
+## Cluster time buckets
+```{r}
+
+bucket_values <- list()
+for (i in 1 : length(bucket_list)) {
+  # bucket_values[[i]] <- colMeans(bucket_list[[i]][, c("WAP", "imbalance", "rush")])
+  bucket_values[[i]] <- colMeans(bucket_list[[i]][, c("WAP", "imbalance", "BidAskSpread")])
+}
+
+bucket_values_df <- do.call(rbind, bucket_values)
+bucket_values_df <- data.frame(bucket_values_df, row.names = NULL)
+colnames(bucket_values_df) <- c("WAP", "imbalance", "BidAskSpread")
+
+
+km.out <- kmeans(bucket_values_df, centers = 4, nstart = 20)
+
+cluster_data_lists <- list()
+clusters <- list()
+for (i in 1:length(bucket_list)) {
+  cluster <- km.out$cluster[[i]]
+
+  if (!(cluster %in% clusters)) {
+    cluster_data_lists[[cluster]] <- list()
+  }
+  clusters <- c(clusters, cluster)
+  
+  cluster_data_lists[[cluster]][[length(cluster_data_lists[[cluster]]) + 1]] <- bucket_list[[i]]
+}
+
+length(cluster_data_lists[[4]])
+
+```
+
+## Create time bucket log returns
+```{r}
+
+cluster_log_r1 <- list()
+for (j in 1 : 4) {
+  log_r1 <- list()
+  for (i in 1 : length(cluster_data_lists[[j]])) {
+    sec <- cluster_data_lists[[j]][[i]] %>% pull(seconds_in_bucket)
+    price <- cluster_data_lists[[j]][[i]] %>% pull(WAP)
+    log_r <- log(price[-1] / price[1:(length(price) - 1)])
+    log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+    time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+    if (length(time.no.change) > 0) {
+      new.df <- data.frame(time = time.no.change, log_return = 0)
+      log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+      log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+    }
+  } 
+  cluster_log_r1[[j]] <- log_r1
+}
+
+cluster_log_r1[[4]][[1]]
+
+```
+
+## Deriving time bucket volatility
+```{r}
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+cluster_vol <- list()
+for (j in 1:4) {
+  vol <- list()
+  for (i in 1 : length(cluster_log_r1[[j]])) {
+  cluster_log_r1[[j]][[i]] <- cluster_log_r1[[j]][[i]] %>% mutate(time_bucket = ceiling(time / 30)) 
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = cluster_log_r1[[j]][[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  cluster_vol[[j]] <- vol
+}
+
+```
+
+
+# Development of the Models 
+## In the below section will consist of three subsections, each for the development of eGARCH, HAV-RV and WLR respectively
+
+### Splitting the training and testing datasets
+```{r}
+
+cluster_vol_train <- list()
+cluster_vol_val <- list()
+for (j in 1:4) {
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1 : length(cluster_log_r1[[j]])) {
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:15, ]
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:15), ]
+  }
+  cluster_vol_train[[j]] <- vol.train
+  cluster_vol_val[[j]] <- vol.val
+}
+
+```
+
+
+### eGARCH Model Development
+```{r warning = FALSE}
+
+spec <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+cluster_GARCH_models <- list()
+for (j in 1:4) {
+  ARMA_GARCH.models <- list()
+  for (i in 1 : length(cluster_vol_train[[j]])) { # This actually shouldn't affect it too much (train/val)
+    ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, 
+                                        data = cluster_log_r1[[j]][[i]] %>% 
+                                               filter(time <= 450) %>%
+                                               pull(log_return),
+                                        solver = 'hybrid')
+  } 
+  cluster_GARCH_models[[j]] <- ARMA_GARCH.models
+}
+
+```
+
+### Generating eGARCH predictions 
+```{r}
+
+cluster_GAR_pred <- list()
+for (j in 1:4) {
+  GAR.pred <- rep(list(), length(cluster_vol[[j]]))
+  
+  for (i in 1 : length(cluster_vol[[j]])) {
+    fspec <- getspec(cluster_GARCH_models[[j]][[i]])
+    if (length(as.list(coef(cluster_GARCH_models[[j]][[i]]))) == 0) { 
+      next
+    }
+    setfixed(fspec) <- as.list(coef(cluster_GARCH_models[[j]][[i]]))
+    future.path <- fitted(ugarchpath(fspec, n.sim = 150, m.sim = 1000))
+    future.path[is.na(future.path)] <- 0 
+    
+    interval_length <- 30
+    num_intervals <- 5
+    interval_volatility <- numeric(num_intervals)
+    
+    for (k in 1:num_intervals) {
+      start_index <- (k - 1) * interval_length + 1
+      end_index <- k * interval_length
+      
+      interval_volatility[k] <- mean(sqrt(colSums(future.path[start_index:end_index, ]^2)))
+    }
+    
+    GAR.pred[[i]] <- interval_volatility
+  }
+  
+  cluster_GAR_pred[[j]] <- GAR.pred
+}
+
+```
+
+
+### Evaluating eGARCH performance on MSE, MAE, RMSE, MAPE, MASE, QLIKE
+```{r warning = FALSE}
+# Initialize lists to store metrics
+GAR_MSE <- list()
+GAR_QLIKE <- list()
+GAR_MAE <- list()
+GAR_RMSE <- list()
+GAR_MAPE <- list()
+GAR_MASE <- list()
+
+for (j in 1:4) {
+  MSE.GAR <- vector()
+  QLIKE.GAR <- vector()
+  MAE.GAR <- vector()
+  RMSE.GAR <- vector()
+  MAPE.GAR <- vector()
+  MASE.GAR <- vector()
+  
+  for (i in 1:length(cluster_vol[[j]])) {
+    # Compute errors
+    errors <- cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]]
+    
+    # Compute metrics
+    MSE <- mean(errors^2)
+    MAE <- mean(abs(errors))
+    RMSE <- sqrt(MSE)
+    MAPE <- mean(abs(errors / cluster_vol_val[[j]][[i]]$volatility))
+    MASE <- MAE / mean(abs(diff(cluster_vol_val[[j]][[i]]$volatility)))
+    
+    QLIKE <- mean(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]] - 
+                   log(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]]) - 1)
+    
+    # Append metrics to lists
+    MSE.GAR <- c(MSE.GAR, MSE)
+    QLIKE.GAR <- c(QLIKE.GAR, QLIKE)
+    MAE.GAR <- c(MAE.GAR, MAE)
+    RMSE.GAR <- c(RMSE.GAR, RMSE)
+    MAPE.GAR <- c(MAPE.GAR, MAPE)
+    MASE.GAR <- c(MASE.GAR, MASE)
+  }
+  
+  # Store metrics in lists
+  GAR_MSE[[j]] <- MSE.GAR
+  GAR_QLIKE[[j]] <- QLIKE.GAR
+  GAR_MAE[[j]] <- MAE.GAR
+  GAR_RMSE[[j]] <- RMSE.GAR
+  GAR_MAPE[[j]] <- MAPE.GAR
+  GAR_MASE[[j]] <- MASE.GAR
+}
+
+par(mfrow = c(2, 2))
+
+# Plot boxplots for MSE
+for (j in 1:4) {
+  boxplot(GAR_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00003))
+}
+
+# Plot boxplots for QLIKE
+for (j in 1:4) {
+  boxplot(GAR_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 3))
+}
+
+# Plot boxplots for MAE
+for (j in 1:4) {
+  boxplot(GAR_MAE[[j]], horizontal = TRUE, main = paste("MAE Plot for cluster", j), ylim = c(0, 0.01))
+}
+
+# Plot boxplots for RMSE
+for (j in 1:4) {
+  boxplot(GAR_RMSE[[j]], horizontal = TRUE, main = paste("RMSE Plot for cluster", j), ylim = c(0, 0.005))
+}
+
+# Plot boxplots for MAPE
+for (j in 1:4) {
+  boxplot(GAR_MAPE[[j]], horizontal = TRUE, main = paste("MAPE Plot for cluster", j), ylim = c(0, 1))
+}
+
+# Plot boxplots for MASE
+for (j in 1:4) {
+  boxplot(GAR_MASE[[j]], horizontal = TRUE, main = paste("MASE Plot for cluster", j), ylim = c(0, 3))
+}
+
+```
+
+## HAV-RV Model Development
+### I have an error here with line 316, it didn't like cluster_vol depsite this being used in the GARCH training!
+```{r}
+
+list_HAV_cluster <- list()
+
+for (j in 1:4) {
+  list_HAV <- list()
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    len.train <- length(cluster_vol_train[[j]][[i]]$volatility)
+    mean.vol <- rep(0, len.train - 5)
+    
+    for (k in 1:5) {
+      mean.vol <- mean.vol + cluster_vol_train[[j]][[i]]$volatility[k:(k + len.train - 6)] / 5
+    }
+    
+    list_HAV[[i]] <- data.frame(
+      vol = cluster_vol_train[[j]][[i]]$volatility[-(1:5)], 
+      vol_1 = cluster_vol_train[[j]][[i]]$volatility[5:(len.train - 1)],
+      mean_vol_5 = mean.vol
+    )
+  }
+  list_HAV_cluster[[j]] <- list_HAV
+}
+
+```
+
+```{r}
+
+cluster_quar <- list() 
+comp_quar <- function(x) {
+  return(length(x) / 3 * sum(x ^ 4))
+}
+
+for (j in 1:4) {  
+  quar <- list()
+  for (i in 1:length(cluster_log_r1[[j]])) {
+    quar[[i]] <- aggregate(log_return ~ time_bucket, data = cluster_log_r1[[j]][[i]], FUN = comp_quar)
+    colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
+  }
+  cluster_quar[[j]] <- quar
+}
+
+```
+
+
+```{r}
+
+list_HAV_wls_cluster <- list()
+
+for (j in 1:4) {
+  HAV_wls_models <- list()
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    len.train <- length(cluster_vol_train[[j]][[i]]$volatility)
+    weights <- list_HAV_cluster[[j]][[i]]$vol_1 /
+               sqrt(cluster_quar[[j]][[i]]$quarticity[5:(len.train - 1)])
+
+    HAV_wls_models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, data = list_HAV_cluster[[j]][[i]],
+                              weights = weights)
+  }
+  list_HAV_wls_cluster[[j]] <- HAV_wls_models
+}
+
+```
+
+```{r}
+cluster_HAV_pred <- list()
+
+for (j in 1:4) {
+  pred_HAV <- list()
+  latest_obs <- list()
+  list_HAV_cluster <- list()
+
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    latest_obs[[i]] <- cluster_vol_train[[j]][[i]]$volatility[11:15]
+    
+    for (t in 1:5) {
+        mean.vol <- sum(latest_obs[[i]])/5
+        list_HAV_cluster[[i]] <- data.frame(vol_1 = latest_obs[[i]][5],
+                                             mean_vol_5 = mean.vol)
+
+        pred_HAV[[t]] <- unname(predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV_cluster[[i]]))
+        latest_obs[[i]] <- c(latest_obs[[i]][-1], pred_HAV[[t]])
+    }
+  }
+  cluster_HAV_pred[[j]] <- latest_obs
+}
+```
+
+
+### Evaluating HAV-RV Performance
+```{r warning = FALSE}
+# Initialize lists to store metrics
+HAV_MSE <- list()
+HAV_QLIKE <- list()
+HAV_MAE <- list()
+HAV_RMSE <- list()
+HAV_MAPE <- list()
+HAV_MASE <- list()
+
+for (j in 1:4) {
+  MSE.HAV <- vector()
+  QLIKE.HAV <- vector()
+  MAE.HAV <- vector()
+  RMSE.HAV <- vector()
+  MAPE.HAV <- vector()
+  MASE.HAV <- vector()
+  
+  for (i in 1:length(cluster_vol[[j]])) {
+    # Compute errors
+    errors <- cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]]
+    
+    # Compute metrics
+    MSE <- mean(errors^2)
+    MAE <- mean(abs(errors))
+    RMSE <- sqrt(MSE)
+    MAPE <- mean(abs(errors / cluster_vol_val[[j]][[i]]$volatility))
+    MASE <- MAE / mean(abs(diff(cluster_vol_val[[j]][[i]]$volatility)))
+    
+    QLIKE <- mean(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]] - 
+                   log(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]]) - 1)
+    
+    # Append metrics to lists
+    MSE.HAV <- c(MSE.HAV, MSE)
+    QLIKE.HAV <- c(QLIKE.HAV, QLIKE)
+    MAE.HAV <- c(MAE.HAV, MAE)
+    RMSE.HAV <- c(RMSE.HAV, RMSE)
+    MAPE.HAV <- c(MAPE.HAV, MAPE)
+    MASE.HAV <- c(MASE.HAV, MASE)
+  }
+  
+  # Store metrics in lists
+  HAV_MSE[[j]] <- MSE.HAV
+  HAV_QLIKE[[j]] <- QLIKE.HAV
+  HAV_MAE[[j]] <- MAE.HAV
+  HAV_RMSE[[j]] <- RMSE.HAV
+  HAV_MAPE[[j]] <- MAPE.HAV
+  HAV_MASE[[j]] <- MASE.HAV
+}
+
+par(mfrow = c(2, 2))
+
+# Plot boxplots for MSE
+for (j in 1:4) {
+  boxplot(HAV_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00003))
+}
+
+# Plot boxplots for QLIKE
+for (j in 1:4) {
+  boxplot(HAV_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 3))
+}
+
+# Plot boxplots for MAE
+for (j in 1:4) {
+  boxplot(HAV_MAE[[j]], horizontal = TRUE, main = paste("MAE Plot for cluster", j), ylim = c(0, 0.01))
+}
+
+# Plot boxplots for RMSE
+for (j in 1:4) {
+  boxplot(HAV_RMSE[[j]], horizontal = TRUE, main = paste("RMSE Plot for cluster", j), ylim = c(0, 0.005))
+}
+
+# Plot boxplots for MAPE
+for (j in 1:4) {
+  boxplot(HAV_MAPE[[j]], horizontal = TRUE, main = paste("MAPE Plot for cluster", j), ylim = c(0, 1))
+}
+
+# Plot boxplots for MASE
+for (j in 1:4) {
+  boxplot(HAV_MASE[[j]], horizontal = TRUE, main = paste("MASE Plot for cluster", j), ylim = c(0, 3))
+}
+```
+
+## Weighted Linear Regression Model Development
+```{r}
+
+# We're not accounting for the missing values when there is insufficient data in the buckets
+cluster_bucket_stats <- list()
+for (j in 1:4) {
+  bucket_stats_mean <- list()
+  for (i in 1: length(cluster_data_lists[[j]])) {
+    bucket_data <- cluster_data_lists[[j]][[i]] |>
+      mutate(time_bucket = ceiling(seconds_in_bucket / 30))  |>
+      filter(time_bucket > 0 & time_bucket < 16) # This ensures I get the right training block
+    bucket_stats <- bucket_data |> dplyr::select(c(time_bucket, BidAskSpread, WAP, num_order))
+    bucket_mean_stats <- aggregate(. ~ time_bucket, data = bucket_stats, FUN = mean)
+    
+    # VERY IMPORTANT - this does a join only when both there is volatility and BAS, WAP and NO entry for that time period
+    bucket_stats_mean[[i]] <- merge(bucket_mean_stats, cluster_vol_train[[j]][[i]], by = "time_bucket", all = FALSE)
+  }
+  cluster_bucket_stats[[j]] <- bucket_stats_mean
+}
+
+
+# This will predict 20 time periods, is this right? 
+# len.train <- 20
+WLR_models <- list()
+for (j in 1:4) {
+  cluster_WLR_models <- list() 
+  for (i in 1 : length(cluster_bucket_stats[[j]])) {
+    cluster_WLR_models[[i]] <- lm(volatility ~ WAP + num_order + BidAskSpread, cluster_bucket_stats[[j]][[i]],
+                       weights = 0.8 ^ (rev(cluster_bucket_stats[[j]][[i]]$time_bucket) / 2)) # This is accounting for NAs
+  }
+  WLR_models[[j]] <- cluster_WLR_models
+}
+
+
+cluster_bucket_stats <- list()
+cluster_WLR_pred <- list()
+for (j in 1:4) {
+  bucket_stats_mean <- list()
+  predict_WLR <- list()
+  for (i in 1: length(cluster_data_lists[[j]])) {
+    bucket_data <- cluster_data_lists[[j]][[i]] |>
+      mutate(time_bucket = ceiling(seconds_in_bucket / 30))  |>
+      filter(time_bucket > 15) # This ensures I get the right testing block
+    bucket_stats <- bucket_data |> dplyr::select(c(time_bucket, BidAskSpread, WAP, num_order))
+    bucket_mean_stats <- aggregate(. ~ time_bucket, data = bucket_stats, FUN = mean)
+    
+    # VERY IMPORTANT - this does a join only when both there is volatility and BAS, WAP and NO entry for that time period
+    bucket_stats_mean[[i]] <- merge(bucket_mean_stats, cluster_vol_val[[j]][[i]], by = "time_bucket", all = FALSE)
+    predict_WLR[[i]] <- predict(WLR_models[[j]][[i]], newdata = bucket_stats_mean[[i]])
+  }
+  cluster_bucket_stats[[j]] <- bucket_stats_mean
+  cluster_WLR_pred[[j]] <- predict_WLR
+}
+
+cluster_WLR_pred[[4]][[12]]
+
+```
+
+### Evaluating WLR Performance
+```{r warning = FALSE}
+
+# Initialize lists to store metrics
+WLR_MSE <- list()
+WLR_QLIKE <- list()
+WLR_MAE <- list()
+WLR_RMSE <- list()
+WLR_MAPE <- list()
+WLR_MASE <- list()
+
+for (j in 1:4) {
+  MSE.WLR <- vector()
+  QLIKE.WLR <- vector()
+  MAE.WLR <- vector()
+  RMSE.WLR <- vector()
+  MAPE.WLR <- vector()
+  MASE.WLR <- vector()
+  
+  for (i in 1:length(cluster_vol[[j]])) {
+    # Compute errors
+    errors <- cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]]
+    
+    # Compute metrics
+    MSE <- mean(errors^2)
+    MAE <- mean(abs(errors))
+    RMSE <- sqrt(MSE)
+    MAPE <- mean(abs(errors / cluster_vol_val[[j]][[i]]$volatility))
+    MASE <- MAE / mean(abs(diff(cluster_vol_val[[j]][[i]]$volatility)))
+    
+    QLIKE <- mean(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]] - 
+                   log(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]]) - 1)
+    
+    # Append metrics to lists
+    MSE.WLR <- c(MSE.WLR, MSE)
+    QLIKE.WLR <- c(QLIKE.WLR, QLIKE)
+    MAE.WLR <- c(MAE.WLR, MAE)
+    RMSE.WLR <- c(RMSE.WLR, RMSE)
+    MAPE.WLR <- c(MAPE.WLR, MAPE)
+    MASE.WLR <- c(MASE.WLR, MASE)
+  }
+  
+  # Store metrics in lists
+  WLR_MSE[[j]] <- MSE.WLR
+  WLR_QLIKE[[j]] <- QLIKE.WLR
+  WLR_MAE[[j]] <- MAE.WLR
+  WLR_RMSE[[j]] <- RMSE.WLR
+  WLR_MAPE[[j]] <- MAPE.WLR
+  WLR_MASE[[j]] <- MASE.WLR
+}
+
+par(mfrow = c(2, 2))
+
+# Plot boxplots for MSE
+for (j in 1:4) {
+  boxplot(WLR_MSE[[j]], horizontal = TRUE, main = paste("MSE Plot for cluster", j), ylim = c(0, 0.00003))
+}
+
+# Plot boxplots for QLIKE
+for (j in 1:4) {
+  boxplot(WLR_QLIKE[[j]], horizontal = TRUE, main = paste("QLIKE Plot for cluster", j), ylim = c(0, 3))
+}
+
+# Plot boxplots for MAE
+for (j in 1:4) {
+  boxplot(WLR_MAE[[j]], horizontal = TRUE, main = paste("MAE Plot for cluster", j), ylim = c(0, 0.01))
+}
+
+# Plot boxplots for RMSE
+for (j in 1:4) {
+  boxplot(WLR_RMSE[[j]], horizontal = TRUE, main = paste("RMSE Plot for cluster", j), ylim = c(0, 0.005))
+}
+
+# Plot boxplots for MAPE
+for (j in 1:4) {
+  boxplot(WLR_MAPE[[j]], horizontal = TRUE, main = paste("MAPE Plot for cluster", j), ylim = c(0, 1))
+}
+
+# Plot boxplots for MASE
+for (j in 1:4) {
+  boxplot(WLR_MASE[[j]], horizontal = TRUE, main = paste("MASE Plot for cluster", j), ylim = c(0, 3))
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
