@@ -659,57 +659,106 @@ for (i in 1:length(vol4)) {
 }
 ```
 
-# Box Plot
+## Box Plot
 
-```{r}
+```{r,warning=FALSE,message=FALSE}
 MSE_mix1_1 <- vector()
 MSE_mix1_2 <- vector()
 MSE_mix1_3 <- vector()
 MSE_mix1_4 <- vector()
+
+MSE_lm_1 <- vector()
+MSE_lm_2 <- vector()
+MSE_lm_3 <- vector()
+MSE_lm_4 <- vector()
+
+MSE_eg_1 <- vector()
+MSE_eg_2 <- vector()
+MSE_eg_3 <- vector()
+MSE_eg_4 <- vector()
+
 QLIKE_mix1_1 <- vector()
 QLIKE_mix1_2 <- vector()
 QLIKE_mix1_3 <- vector()
 QLIKE_mix1_4 <- vector()
 
+QLIKE_lm_1 <- vector()
+QLIKE_lm_2 <- vector()
+QLIKE_lm_3 <- vector()
+QLIKE_lm_4 <- vector()
+
+QLIKE_eg_1 <- vector()
+QLIKE_eg_2 <- vector()
+QLIKE_eg_3 <- vector()
+QLIKE_eg_4 <- vector()
+
 for (i in 1 : length(vol1)){
   MSE_mix1_1 <- c(MSE_mix1_1,mean( vol_mean1[[i]] - mix1_1[[i]]) ^ 2)
+  MSE_eg_1 <- c(MSE_eg_1,mean( vol_mean1[[i]] - pred1_1[[i]]) ^ 2)
+  MSE_lm_1 <- c(MSE_lm_1,mean( vol_mean1[[i]] - pred2_1[[i]]) ^ 2)
+  
   QLIKE_mix1_1 <- c(QLIKE_mix1_1,mean(vol_mean1[[i]]/mix1_1[[i]]
                                       - log(vol_mean1[[i]]/mix1_1[[i]])-1))
+  QLIKE_lm_1 <- c(QLIKE_lm_1,mean(vol_mean1[[i]]/pred2_1[[i]]
+                                      - log(vol_mean1[[i]]/pred2_1[[i]])-1))
+  QLIKE_eg_1 <- c(QLIKE_eg_1,mean(vol_mean1[[i]]/pred1_1[[i]]
+                                      - log(vol_mean1[[i]]/pred1_1[[i]])-1))
 }
 
 for (i in 1 : length(vol2)){
   MSE_mix1_2 <- c(MSE_mix1_2,mean( vol_mean2[[i]] - mix1_2[[i]]) ^ 2)
+  MSE_eg_2 <- c(MSE_eg_2,mean( vol_mean2[[i]] - pred1_2[[i]]) ^ 2)
+  MSE_lm_2 <- c(MSE_lm_2,mean( vol_mean2[[i]] - pred2_2[[i]]) ^ 2)
+  
   QLIKE_mix1_2 <- c(QLIKE_mix1_2,mean(vol_mean2[[i]]/mix1_2[[i]]
                                       - log(vol_mean2[[i]]/mix1_2[[i]])-1))
+  QLIKE_lm_2 <- c(QLIKE_lm_2,mean(vol_mean2[[i]]/pred2_2[[i]]
+                                      - log(vol_mean2[[i]]/pred2_2[[i]])-1))
+  QLIKE_eg_2 <- c(QLIKE_eg_2,mean(vol_mean2[[i]]/pred1_2[[i]]
+                                      - log(vol_mean2[[i]]/pred1_2[[i]])-1))
 }
 
 for (i in 1 : length(vol3)){
   MSE_mix1_3 <- c(MSE_mix1_3,mean( vol_mean3[[i]] - mix1_3[[i]]) ^ 2)
+  MSE_eg_3 <- c(MSE_eg_3,mean( vol_mean3[[i]] - pred1_3[[i]]) ^ 2)
+  MSE_lm_3 <- c(MSE_lm_3,mean( vol_mean3[[i]] - pred2_3[[i]]) ^ 2)
+  
   QLIKE_mix1_3 <- c(QLIKE_mix1_3,mean(vol_mean3[[i]]/mix1_3[[i]]
                                       - log(vol_mean3[[i]]/mix1_3[[i]])-1))
+  QLIKE_lm_3 <- c(QLIKE_lm_3,mean(vol_mean3[[i]]/pred2_3[[i]]
+                                      - log(vol_mean3[[i]]/pred2_3[[i]])-1))
+  QLIKE_eg_3 <- c(QLIKE_eg_3,mean(vol_mean3[[i]]/pred1_3[[i]]
+                                      - log(vol_mean3[[i]]/pred1_3[[i]])-1))
 }
 
 for (i in 1 : length(vol4)){
   MSE_mix1_4 <- c(MSE_mix1_4,mean( vol_mean4[[i]] - mix1_4[[i]]) ^ 2)
+  MSE_eg_4 <- c(MSE_eg_4,mean( vol_mean4[[i]] - pred1_4[[i]]) ^ 2)
+  MSE_lm_4 <- c(MSE_lm_4,mean( vol_mean4[[i]] - pred2_4[[i]]) ^ 2)
+  
   QLIKE_mix1_4 <- c(QLIKE_mix1_4,mean(vol_mean4[[i]]/mix1_4[[i]]
                                       - log(vol_mean4[[i]]/mix1_4[[i]])-1))
+  QLIKE_lm_4 <- c(QLIKE_lm_4,mean(vol_mean4[[i]]/pred2_4[[i]]
+                                      - log(vol_mean4[[i]]/pred2_4[[i]])-1))
+  QLIKE_eg_4 <- c(QLIKE_eg_4,mean(vol_mean4[[i]]/pred1_4[[i]]
+                                      - log(vol_mean4[[i]]/pred1_4[[i]])-1))
 }
 ```
 
 ```{r,warning=FALSE,message=FALSE}
-mse1_1 <- data_frame(MSE_mix1_1)
-mse1_2 <- data_frame(MSE_mix1_2)
-mse1_3 <- data_frame(MSE_mix1_3)
-mse1_4 <- data_frame(MSE_mix1_4)
+mse1_1 <- data_frame(MSE_mix1_1,MSE_lm_1,MSE_eg_1)
+mse1_2 <- data_frame(MSE_mix1_2,MSE_lm_2,MSE_eg_2)
+mse1_3 <- data_frame(MSE_mix1_3,MSE_lm_3,MSE_eg_3)
+mse1_4 <- data_frame(MSE_mix1_4,MSE_lm_4,MSE_eg_4)
 b1_1 <- ggplot(mse1_1,aes(y = MSE_mix1_1)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 1')
 b1_2 <- ggplot(mse1_2,aes(y = MSE_mix1_2)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 2')
 b1_3 <- ggplot(mse1_3,aes(y = MSE_mix1_3)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 3')
 b1_4 <- ggplot(mse1_4,aes(y = MSE_mix1_4)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 4')
 
-qle1_1 <- data_frame(QLIKE_mix1_1)
-qle1_2 <- data_frame(QLIKE_mix1_2)
-qle1_3 <- data_frame(QLIKE_mix1_3)
-qle1_4 <- data_frame(QLIKE_mix1_4)
+qle1_1 <- data_frame(QLIKE_mix1_1,QLIKE_lm_1,QLIKE_eg_1)
+qle1_2 <- data_frame(QLIKE_mix1_2,QLIKE_lm_2,QLIKE_eg_2)
+qle1_3 <- data_frame(QLIKE_mix1_3,QLIKE_lm_3,QLIKE_eg_3)
+qle1_4 <- data_frame(QLIKE_mix1_4,QLIKE_lm_4,QLIKE_eg_4)
 q1_1 <- ggplot(qle1_1,aes(y = QLIKE_mix1_1)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 1')
 q1_2 <- ggplot(qle1_2,aes(y = QLIKE_mix1_2)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 2')
 q1_3 <- ggplot(qle1_3,aes(y = QLIKE_mix1_3)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 3')
@@ -718,5 +767,89 @@ q1_4 <- ggplot(qle1_4,aes(y = QLIKE_mix1_4)) + geom_boxplot() +ylim(0,0.15) + xl
 plot_1 <- plot_grid(b1_1,b1_2,b1_3,b1_4,q1_1,q1_2,q1_3,q1_4,nrow =2)
 titl <- ggdraw() + draw_label('Egarch + Linear regression Mix', fontface = 'bold')
 plot1_f <- plot_grid(titl,plot_1,ncol = 1,rel_heights = c(0.05,1))
+```
+
+# Plot for mix
+
+```{r}
 plot1_f
+```
+
+# plot for egarch
+
+```{r,warning=FALSE,message=FALSE}
+b1_1eg <- ggplot(mse1_1,aes(y = MSE_eg_1)) + geom_boxplot() +ylim(0,0.00003) + xlab('') + ylab('MSE') + labs(title = 'cluster 1')
+b1_2eg <- ggplot(mse1_2,aes(y = MSE_eg_2)) + geom_boxplot() +ylim(0,0.00003) + xlab('') + ylab('MSE') + labs(title = 'cluster 2')
+b1_3eg <- ggplot(mse1_3,aes(y = MSE_eg_3)) + geom_boxplot() +ylim(0,0.00003) + xlab('') + ylab('MSE') + labs(title = 'cluster 3')
+b1_4eg <- ggplot(mse1_4,aes(y = MSE_eg_4)) + geom_boxplot() +ylim(0,0.00003) + xlab('') + ylab('MSE') + labs(title = 'cluster 4')
+q1_1eg <- ggplot(qle1_1,aes(y = QLIKE_eg_1)) + geom_boxplot() +ylim(0,0.5) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 1')
+q1_2eg <- ggplot(qle1_2,aes(y = QLIKE_eg_2)) + geom_boxplot() +ylim(0,0.5) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 2')
+q1_3eg <- ggplot(qle1_3,aes(y = QLIKE_eg_3)) + geom_boxplot()  +ylim(0,0.5)+ xlab('') + ylab('QLIKE') + labs(title = 'cluster 3')
+q1_4eg <- ggplot(qle1_4,aes(y = QLIKE_eg_4)) + geom_boxplot() +ylim(0,0.5) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 4')
+
+plot_1eg <- plot_grid(b1_1eg,b1_2eg,b1_3eg,b1_4eg,q1_1eg,q1_2eg,q1_3eg,q1_4eg,nrow =2)
+titleg <- ggdraw() + draw_label('Egarch', fontface = 'bold')
+plot1_feg <- plot_grid(titleg,plot_1eg,ncol = 1,rel_heights = c(0.05,1))
+plot1_feg
+```
+
+# plot for regression
+
+```{r,warning=FALSE,message=FALSE}
+b1_1lm <- ggplot(mse1_1,aes(y = MSE_lm_1)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 1')
+b1_2lm <- ggplot(mse1_2,aes(y = MSE_lm_2)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 2')
+b1_3lm <- ggplot(mse1_3,aes(y = MSE_lm_3)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 3')
+b1_4lm <- ggplot(mse1_4,aes(y = MSE_lm_4)) + geom_boxplot() +ylim(0,0.000003) + xlab('') + ylab('MSE') + labs(title = 'cluster 4')
+q1_1lm <- ggplot(qle1_1,aes(y = QLIKE_lm_1)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 1')
+q1_2lm <- ggplot(qle1_2,aes(y = QLIKE_lm_2)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 2')
+q1_3lm <- ggplot(qle1_3,aes(y = QLIKE_lm_3)) + geom_boxplot()  +ylim(0,0.15)+ xlab('') + ylab('QLIKE') + labs(title = 'cluster 3')
+q1_4lm <- ggplot(qle1_4,aes(y = QLIKE_lm_4)) + geom_boxplot() +ylim(0,0.15) + xlab('') + ylab('QLIKE') + labs(title = 'cluster 4')
+
+plot_1lm <- plot_grid(b1_1lm,b1_2lm,b1_3lm,b1_4lm,q1_1lm,q1_2lm,q1_3lm,q1_4lm,nrow =2)
+titllm <- ggdraw() + draw_label('Weighted linear regression', fontface = 'bold')
+plot1_flm <- plot_grid(titllm,plot_1lm,ncol = 1,rel_heights = c(0.05,1))
+plot1_flm
+```
+
+# Plot for all 3
+
+## cluster1
+
+```{r,warning=FALSE,message=FALSE}
+label=c("Mix","Regression","Egarch")
+boxplot(mse1_1,main="MSE cluster1",ylim=c(0,0.00001),names = label)
+```
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(qle1_1,main="Qlike cluster1",ylim=c(0,2),names = label)
+```
+
+## cluster2
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(mse1_2,main="MSE cluster2",ylim=c(0,0.00001),names = label)
+```
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(qle1_2,main="Qlike cluster2",ylim=c(0,2),names = label)
+```
+
+## cluster3
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(mse1_3,main="MSE cluster3",ylim=c(0,0.00001),names = label)
+```
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(qle1_3,main="Qlike cluster3",ylim=c(0,2),names = label)
+```
+
+## cluster4
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(qle1_4,main="Qlike cluster4",ylim=c(0,2),names = label)
+```
+
+```{r,warning=FALSE,message=FALSE}
+boxplot(qle1_4,main="Qlike cluster4",ylim=c(0,2),names = label)
 ```
