@@ -1,0 +1,206 @@
+---
+title: "Clustering"
+format:
+  html:
+    toc: true
+    embed-resources: true
+    self-contained-math: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+set.seed(3888)
+```
+
+```{r}
+library(tidyverse)
+library(scatterplot3d)
+library(plotly)
+```
+
+### Load data
+
+```{r}
+dir.short <- "C:/Users/Jacob/Desktop/data/Optiver/individual_book_train"
+all.files.short <- list.files(dir.short)
+
+raw_df_cl = data.frame(name = character(),
+                       time_id = numeric(),
+                       mean_BAS = numeric(),
+                       mean_WAP = numeric(),
+                       imbalance = numeric(),
+                       volume = numeric(),
+                       range = numeric(),
+                       num_order = numeric(),
+                       rush = numeric(),
+                       mean_VWAP = numeric(),
+                       mean_liquidity_imbalance = numeric(),
+                       mean_market_resilience = numeric(),
+                       stringsAsFactors = FALSE)
+
+for (i in all.files.short) {
+  stock = read.csv(file.path(dir.short, i))
+  
+  # randomly select time_ids from stock
+  time_ids = sample(unique(stock$time_id), 10)
+  
+  file_name = gsub("stock_", "", (gsub(".csv", "", i)))
+  
+  stock = stock |> 
+      filter(time_id %in% time_ids) |>
+      mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) |>
+      mutate(BidAskSpread = ask_price1 / bid_price1 - 1) |>
+      mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) |>
+      mutate(volume = (ask_size1 + bid_size1)) |>
+      mutate(range = (ask_price1 - bid_price1)) |>
+      mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) |>
+      mutate(rush = (bid_size1*bid_price1)/(ask_size1*ask_price1)) |>
+      mutate(VWAP = (bid_price1 * bid_size1 + ask_price1 * ask_size1 + bid_price2 * bid_size2 + ask_price2 * ask_size2) /
+              (bid_size1 + ask_size1 + bid_size2 + ask_size2)) |> #Volume Weighted Average Price (VWAP) Across Levels: VWAP using both levels of bids and asks to get a more comprehensive price measure.
+      mutate(liquidity_imbalance = (bid_size1 + bid_size2 - ask_size1 - ask_size2) /
+                             (bid_size1 + bid_size2 + ask_size1 + ask_size2)) |> #Liquidity imbalance across multiple price levels, considering both bid and ask sizes. 
+      mutate(market_resilience = (bid_size1 + bid_size2 + ask_size1 + ask_size2) / 
+                          (abs(bid_price1 - ask_price1) + abs(bid_price2 - ask_price2))) |>  #Resilience to large orders, estimated by the available liquidity at both price levels.
+
+      group_by(time_id) |>
+      summarise(mean_BAS = mean(BidAskSpread),
+                mean_WAP = mean(WAP),
+                imbalance = mean(imbalance),
+                volume = mean(volume),
+                range = mean(range),
+                num_order = mean(num_order),
+                rush = mean(rush),
+                mean_VWAP = mean(VWAP),
+                mean_liquidity_imbalance = mean(liquidity_imbalance),
+                mean_market_resilience = mean(market_resilience)) |>
+      mutate(file_name = file_name)
+      
+  raw_df_cl = rbind(raw_df_cl, stock)
+  
+  print(file_name)
+
+}
+```
+
+```{r}
+# boxplot(df_cl$mean_WAP)
+# boxplot(df_cl$imbalance)
+# boxplot(sqrt(df_cl$rush))
+
+```
+
+
+## Apply clustering
+
+```{r}
+library(caret)
+
+df_cl = raw_df_cl
+
+
+df_cl$mean_BAS <- as.vector(scale(df_cl$mean_BAS, center = min(df_cl$mean_BAS), scale = max(df_cl$mean_BAS) - min(df_cl$mean_BAS)))
+df_cl$mean_WAP = as.vector(scale(df_cl$mean_WAP, center = min(df_cl$mean_WAP), scale = max(df_cl$mean_WAP) - min(df_cl$mean_WAP)))
+df_cl$imbalance = as.vector(scale(df_cl$imbalance, center = min(df_cl$imbalance), scale = max(df_cl$imbalance) - min(df_cl$imbalance)))
+df_cl$volume = as.vector(scale(df_cl$volume, center = min(df_cl$volume), scale = max(df_cl$volume) - min(df_cl$volume)))
+df_cl$range = as.vector(scale(df_cl$range, center = min(df_cl$range), scale = max(df_cl$range) - min(df_cl$range)))
+df_cl$num_order = as.vector(scale(df_cl$num_order, center = min(df_cl$num_order), scale = max(df_cl$num_order) - min(df_cl$num_order)))
+df_cl$rush = as.vector(scale(df_cl$rush, center = min(df_cl$rush), scale = max(df_cl$rush) - min(df_cl$rush)))
+df_cl$mean_VWAP = as.vector(scale(df_cl$mean_VWAP, center = min(df_cl$mean_VWAP), scale = max(df_cl$mean_VWAP) - min(df_cl$mean_VWAP)))
+df_cl$mean_liquidity_imbalance = as.vector(scale(df_cl$mean_liquidity_imbalance, center = min(df_cl$mean_liquidity_imbalance), scale = max(df_cl$mean_liquidity_imbalance) - min(df_cl$mean_liquidity_imbalance)))
+df_cl$mean_market_resilience = as.vector(scale(df_cl$mean_market_resilience, center = min(df_cl$mean_market_resilience), scale = max(df_cl$mean_market_resilience) - min(df_cl$mean_market_resilience)))
+
+df_cl$file_name = as.numeric(df_cl$file_name)
+df_cl = df_cl[order(df_cl$file_name),]
+df_cl$name = paste(df_cl$file_name, df_cl$time_id, sep = " ")
+
+df_cl = df_cl |>
+    filter(file_name != 31) |>
+    dplyr::select(-time_id, -file_name)
+# |>
+#     select(-mean_WAP)
+
+# df_cl <- df_cl[c("name", "mean_BAS", "imbalance", "volume", "range", "num_order")]
+# df_cl <- df_cl[c("name", "mean_BAS", "volume")] #Sucks
+# df_cl <- df_cl[c("name", "mean_BAS", "imbalance")] #Sucks
+# df_cl <- df_cl[c("name", "mean_BAS", "range")] # Very linear and not differentiated
+# df_cl <- df_cl[c("name", "mean_BAS", "num_order")] # Same problem with bas, volume - L like distribution
+# df_cl <- df_cl[c("name", "imbalance", "mean_WAP")] # Much more interesting but not quite the seperation we need
+# df_cl <- df_cl[c("name", "imbalance", "volume")] # Much more interesting but not quite the seperation we need
+# df_cl <- df_cl[c("name", "imbalance", "range")] # Best so far but still have significant grouping
+# df_cl <- df_cl[c("name", "imbalance", "num_order")] # Very similar to imbalance, volume not great
+# df_cl <- df_cl[c("name", "volume", "range")] # Very not good L like but super clumped
+# df_cl <- df_cl[c("name", "volume", "num_order")] # Linear but clumped - v bad
+# df_cl <- df_cl[c("name", "range", "num_order")]
+# df_cl <- df_cl[c("name", "imbalance", "mean_market_resilience")]
+# df_cl <- df_cl[c("name", "imbalance", "mean_liquidity_imbalance")]
+
+
+
+```
+
+# Both of these had the most differentiation 
+```{r}
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "num_order")]
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "mean_VWAP")]
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "mean_market_resilience")]
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "mean_liquidity_imbalance")]
+```
+
+
+### Cluster with k = 4
+```{r}
+df_cl <- df_cl[c("name", "imbalance", "mean_liquidity_imbalance", "mean_market_resilience")] 
+# df_cl$mean_WAP = log(df_cl$mean_WAP)
+# df_cl$imbalance = log(df_cl$imbalance)
+
+
+km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
+
+df = data.frame(
+    names = df_cl$name,
+    imbalance = df_cl$imbalance,
+    mean_liquidity_imbalance = df_cl$mean_liquidity_imbalance,
+    mean_market_resilience = df_cl$mean_market_resilience,
+    cluster = factor(km.out$cluster)
+)
+
+imbalance_df_cl <- df_cl %>% 
+  left_join(df, by = c("name" = "names", "imbalance" = "imbalance", "mean_liquidity_imbalance" = "mean_liquidity_imbalance", "mean_market_resilience" = "mean_market_resilience"))
+
+# plot = ggplot(df, aes(x = volume, y = imbalance, z = wap, color = cluster, label = names)) +
+#   geom_point() +
+#   geom_text(aes(label=names), vjust = -1, hjust = 1) +
+#   theme_minimal() +
+#   labs(title = "Cluster Plot", x = "volume", y = "imbalance")
+# 
+# ggplotly(plot)
+
+# 
+# plot_ly(x = df$imbalance, y = df$mean_liquidity_imbalance, z = df$mean_market_resilience, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
+
+```
+
+```{r}
+df_imb_pca <- select(imbalance_df_cl, -name, -cluster)
+
+df_imb_pca_res <- prcomp(df_imb_pca, center = TRUE)
+df_imb_pca_res_stand <- prcomp(df_imb_pca, center = TRUE, scale. = TRUE)
+df_imb_pca_res <- as.data.frame(df_imb_pca_res$x)
+df_imb_pca_res_stand <- as.data.frame(df_imb_pca_res_stand$x)
+
+ggplot(df_imb_pca_res, aes(x = PC1, y = PC2, color = imbalance_df_cl$cluster)) +
+  geom_point(alpha = 0.5) +
+  theme_bw() +
+  labs(title = "PCA Plot of imbalance cluster (Not standardized)",
+       x = "Principal Component 1",
+       y = "Principal Component 2")
+
+ggplot(df_imb_pca_res_stand, aes(x = PC1, y = PC2, color = imbalance_df_cl$cluster)) +
+  geom_point(alpha = 0.5) +
+  theme_bw() +
+  labs(title = "PCA Plot of imbalance cluster (Standardized)",
+       x = "Principal Component 1",
+       y = "Principal Component 2")
+```
