@@ -1,0 +1,1078 @@
+---
+title: "HAV-GAR-WLR-fullmix"
+output: html_document
+date: "2024-05-05"
+---
+
+```{r}
+library(dplyr)
+library(rugarch)
+library(ggplot2)
+library(randomForest)
+```
+
+# Initial Data Loading
+## Loading in all of the stock CSV files from the main dataset
+```{r}
+dir_stocks <- "~/Documents/DATA3888/optiver_volatility/data/individual_book_train/"
+all_stocks <- list.files(dir_stocks)
+```
+
+## Sampling four random stocks from the stock list and reading in those files
+```{r}
+set.seed(87)
+four_stocks <- sample(all_stocks, 4)
+
+stock_files_list <- list()
+for (i in four_stocks) {
+  stock_files_list[[i]] <- read.csv(file.path(dir_stocks, i))
+}
+
+```
+
+## Peform additional transformations to derive desired variables for each stock
+```{r}
+
+for (i in 1 : length(stock_files_list)) {
+  stock_files_list[[i]] <- stock_files_list[[i]] %>% 
+    mutate(WAP = (bid_price1 * ask_size1 + ask_price1 * bid_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(BidAskSpread = ask_price1 / bid_price1 - 1) %>%
+    mutate(num_order = bid_size1 + ask_size1 + bid_size2 + ask_size2) %>%
+    mutate(imbalance = (bid_size1 - ask_size1) / (bid_size1 + ask_size1)) %>%
+    mutate(volume = (ask_size1 + bid_size1)) %>%
+    mutate(range = (ask_price1 - bid_price1)) %>%
+    mutate(rush = (bid_size1*bid_price1)/(ask_size1*ask_price1))
+}
+
+```
+
+## Taking the first 500 time ids of each stock
+```{r}
+
+bucket_list <- list()
+for (j in 1 : length(stock_files_list)) {
+  time_IDs <- unique(stock_files_list[[j]][, 1])[1:500]
+  for (i in 1 : length(time_IDs)) {
+    bucket <- stock_files_list[[j]] %>% filter(time_id == time_IDs[i])
+    bucket_list[[length(bucket_list) + 1]] <- bucket
+  }
+}
+
+bucket_list[[2000]]
+
+```
+
+
+## Cluster time buckets
+```{r}
+
+bucket_values <- list()
+for (i in 1 : length(bucket_list)) {
+  bucket_values[[i]] <- colMeans(bucket_list[[i]][, c("WAP", "imbalance")])
+}
+
+bucket_values_df <- do.call(rbind, bucket_values)
+bucket_values_df <- data.frame(bucket_values_df, row.names = NULL)
+colnames(bucket_values_df) <- c("WAP", "imbalance")
+
+km.out <- kmeans(bucket_values_df, centers = 4, nstart = 20)
+
+
+cluster_data_lists <- list()
+clusters <- list()
+for (i in 1:length(bucket_list)) {
+  cluster <- km.out$cluster[[i]]
+
+  if (!(cluster %in% clusters)) {
+    cluster_data_lists[[cluster]] <- list()
+  }
+  clusters <- c(clusters, cluster)
+  
+  cluster_data_lists[[cluster]][[length(cluster_data_lists[[cluster]]) + 1]] <- bucket_list[[i]]
+}
+
+cluster_data_lists[[3]][[2]]
+
+```
+
+## Create time bucket log returns
+```{r}
+
+cluster_log_r1 <- list()
+for (j in 1 : 4) {
+  log_r1 <- list()
+  for (i in 1 : length(cluster_data_lists[[j]])) {
+    sec <- cluster_data_lists[[j]][[i]] %>% pull(seconds_in_bucket)
+    price <- cluster_data_lists[[j]][[i]] %>% pull(WAP)
+    log_r <- log(price[-1] / price[1:(length(price) - 1)])
+    log_r1[[i]] <- data.frame(time = sec[-1], log_return = log_r)
+    time.no.change <- (1:600)[!(1:600 %in% log_r1[[i]]$time)]
+    if (length(time.no.change) > 0) {
+      new.df <- data.frame(time = time.no.change, log_return = 0)
+      log_r1[[i]] <- rbind(log_r1[[i]], new.df)
+      log_r1[[i]] <- log_r1[[i]][order(log_r1[[i]]$time), ]
+    }
+  } 
+  cluster_log_r1[[j]] <- log_r1
+}
+
+cluster_log_r1[[3]][[1]]
+
+```
+
+## Deriving time bucket volatility
+```{r}
+comp_vol <- function(x) {
+  return(sqrt(sum(x ^ 2)))
+}
+
+cluster_vol <- list()
+for (j in 1:4) {
+  vol <- list()
+  for (i in 1 : length(cluster_log_r1[[j]])) {
+  cluster_log_r1[[j]][[i]] <- cluster_log_r1[[j]][[i]] %>% mutate(time_bucket = ceiling(time / 30)) 
+  vol[[i]] <- aggregate(log_return ~ time_bucket, data = cluster_log_r1[[j]][[i]], FUN = comp_vol)
+  colnames(vol[[i]]) <- c('time_bucket', 'volatility')
+  }
+  cluster_vol[[j]] <- vol
+}
+
+```
+
+
+# Development of the Models 
+## In the below section will consist of three subsections, each for the development of eGARCH, HAV-RV and WLR respectively
+
+### Splitting the training and testing datasets
+```{r}
+
+cluster_vol_train <- list()
+cluster_vol_val <- list()
+for (j in 1 : 4) {
+  vol.train <- list()
+  vol.val <- list()
+  
+  for (i in 1 : length(cluster_log_r1[[j]])) {
+    vol.train[[i]] <- cluster_vol[[j]][[i]][1:15, ]
+    vol.val[[i]] <- cluster_vol[[j]][[i]][-(1:15), ]
+  }
+  cluster_vol_train[[j]] <- vol.train
+  cluster_vol_val[[j]] <- vol.val
+}
+
+```
+
+
+### eGARCH Model Development
+```{r warning = FALSE}
+
+spec <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(1, 1)), 
+                   mean.model = list(armaOrder = c(1, 1)), 
+                   distribution.model = "norm")
+
+cluster_GARCH_models <- list()
+for (j in 1:4) {
+  ARMA_GARCH.models <- list()
+  for (i in 1 : length(cluster_vol_train[[j]])) { # This actually shouldn't affect it too much (train/val)
+    ARMA_GARCH.models[[i]] <- ugarchfit(spec = spec, 
+                                        data = cluster_log_r1[[j]][[i]] %>% 
+                                               filter(time <= 450) %>%
+                                               pull(log_return),
+                                        solver = 'hybrid')
+  } 
+  cluster_GARCH_models[[j]] <- ARMA_GARCH.models
+}
+
+```
+
+### Generating eGARCH predictions 
+```{r}
+
+cluster_GAR_pred <- list()
+for (j in 1:4) {
+  GAR.pred <- rep(list(), length(cluster_vol[[j]]))
+  
+  for (i in 1 : length(cluster_vol[[j]])) {
+    fspec <- getspec(cluster_GARCH_models[[j]][[i]])
+    if (length(as.list(coef(cluster_GARCH_models[[j]][[i]]))) == 0) { 
+      next
+    }
+    setfixed(fspec) <- as.list(coef(cluster_GARCH_models[[j]][[i]]))
+    future.path <- fitted(ugarchpath(fspec, n.sim = 150, m.sim = 1000))
+    future.path[is.na(future.path)] <- 0 
+    
+    interval_length <- 30
+    num_intervals <- 5
+    interval_volatility <- numeric(num_intervals)
+    
+    for (k in 1:num_intervals) {
+      start_index <- (k - 1) * interval_length + 1
+      end_index <- k * interval_length
+      
+      interval_volatility[k] <- mean(sqrt(colSums(future.path[start_index:end_index, ]^2)))
+    }
+    
+    GAR.pred[[i]] <- interval_volatility
+  }
+  
+  cluster_GAR_pred[[j]] <- GAR.pred
+}
+
+```
+
+
+## HAV-RV Model Development
+### I have an error here with line 316, it didn't like cluster_vol depsite this being used in the GARCH training!
+```{r}
+
+list_HAV_cluster <- list()
+
+for (j in 1:4) {
+  list_HAV <- list()
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    len.train <- length(cluster_vol_train[[j]][[i]]$volatility)
+    mean.vol <- rep(0, len.train - 5)
+    
+    for (k in 1:5) {
+      mean.vol <- mean.vol + cluster_vol_train[[j]][[i]]$volatility[k:(k + len.train - 6)] / 5
+    }
+    
+    list_HAV[[i]] <- data.frame(
+      vol = cluster_vol_train[[j]][[i]]$volatility[-(1:5)], 
+      vol_1 = cluster_vol_train[[j]][[i]]$volatility[5:(len.train - 1)],
+      mean_vol_5 = mean.vol
+    )
+  }
+  list_HAV_cluster[[j]] <- list_HAV
+}
+
+```
+
+```{r}
+
+cluster_quar <- list() 
+comp_quar <- function(x) {
+  return(length(x) / 3 * sum(x ^ 4))
+}
+
+for (j in 1:4) {
+  quar <- list()
+  for (i in 1:length(cluster_log_r1[[j]])) {
+    quar[[i]] <- aggregate(log_return ~ time_bucket, data = cluster_log_r1[[j]][[i]], FUN = comp_quar)
+    colnames(quar[[i]]) <- c('time_bucket', 'quarticity')
+  }
+  cluster_quar[[j]] <- quar
+}
+
+```
+
+
+```{r}
+
+list_HAV_wls_cluster <- list()
+
+for (j in 1:4) {
+  HAV_wls_models <- list()
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    len.train <- length(cluster_vol_train[[j]][[i]]$volatility)
+    weights <- list_HAV_cluster[[j]][[i]]$vol_1 /
+               sqrt(cluster_quar[[j]][[i]]$quarticity[5:(len.train - 1)])
+
+    HAV_wls_models[[i]] <- lm(vol ~ vol_1 + mean_vol_5, data = list_HAV_cluster[[j]][[i]],
+                              weights = weights)
+  }
+  list_HAV_wls_cluster[[j]] <- HAV_wls_models
+}
+
+```
+
+```{r}
+cluster_HAV_pred <- list()
+
+for (j in 1:4) {
+  pred_HAV <- list()
+  latest_obs <- list()
+  list_HAV_cluster <- list()
+
+  for (i in 1:length(cluster_vol_train[[j]])) {
+    latest_obs[[i]] <- cluster_vol_train[[j]][[i]]$volatility[11:15]
+    
+    for (t in 1:5) {
+        mean.vol <- sum(latest_obs[[i]])/5
+        list_HAV_cluster[[i]] <- data.frame(vol_1 = latest_obs[[i]][5],
+                                             mean_vol_5 = mean.vol)
+
+        pred_HAV[[t]] <- unname(predict(list_HAV_wls_cluster[[j]][[i]], newdata = list_HAV_cluster[[i]]))
+        latest_obs[[i]] <- c(latest_obs[[i]][-1], pred_HAV[[t]])
+    }
+  }
+  cluster_HAV_pred[[j]] <- latest_obs
+}
+```
+
+
+## Weighted Linear Regression Model Development
+```{r}
+
+# We're not accounting for the missing values when there is insufficient data in the buckets
+cluster_bucket_stats <- list()
+for (j in 1:4) {
+  bucket_stats_mean <- list()
+  for (i in 1: length(cluster_data_lists[[j]])) {
+    bucket_data <- cluster_data_lists[[j]][[i]] |>
+      mutate(time_bucket = ceiling(seconds_in_bucket / 30))  |>
+      filter(time_bucket > 0 & time_bucket < 16) # This ensures I get the right training block
+    bucket_stats <- bucket_data |> dplyr::select(c(time_bucket, BidAskSpread, WAP, imbalance))
+    bucket_mean_stats <- aggregate(. ~ time_bucket, data = bucket_stats, FUN = mean)
+    
+    # VERY IMPORTANT - this does a join only when both there is volatility and BAS, WAP and NO entry for that time period
+    bucket_stats_mean[[i]] <- merge(bucket_mean_stats, cluster_vol_train[[j]][[i]], by = "time_bucket", all = FALSE)
+  }
+  cluster_bucket_stats[[j]] <- bucket_stats_mean
+}
+
+
+# This will predict 20 time periods, is this right? 
+# len.train <- 20
+WLR_models <- list()
+for (j in 1:4) {
+  cluster_WLR_models <- list() 
+  for (i in 1 : length(cluster_bucket_stats[[j]])) {
+    cluster_WLR_models[[i]] <- lm(volatility ~ WAP + imbalance + BidAskSpread, cluster_bucket_stats[[j]][[i]],
+                       weights = 0.8 ^ (rev(cluster_bucket_stats[[j]][[i]]$time_bucket) / 2)) # This is accounting for NAs
+  }
+  WLR_models[[j]] <- cluster_WLR_models
+}
+
+
+cluster_bucket_stats <- list()
+cluster_WLR_pred <- list()
+for (j in 1:4) {
+  bucket_stats_mean <- list()
+  predict_WLR <- list()
+  for (i in 1: length(cluster_data_lists[[j]])) {
+    bucket_data <- cluster_data_lists[[j]][[i]] |>
+      mutate(time_bucket = ceiling(seconds_in_bucket / 30))  |>
+      filter(time_bucket > 15) # This ensures I get the right testing block
+    bucket_stats <- bucket_data |> dplyr::select(c(time_bucket, BidAskSpread, WAP, imbalance))
+    bucket_mean_stats <- aggregate(. ~ time_bucket, data = bucket_stats, FUN = mean)
+    
+    # VERY IMPORTANT - this does a join only when both there is volatility and BAS, WAP and NO entry for that time period
+    bucket_stats_mean[[i]] <- merge(bucket_mean_stats, cluster_vol_val[[j]][[i]], by = "time_bucket", all = FALSE)
+    predict_WLR[[i]] <- predict(WLR_models[[j]][[i]], newdata = bucket_stats_mean[[i]])
+  }
+  cluster_bucket_stats[[j]] <- bucket_stats_mean
+  cluster_WLR_pred[[j]] <- predict_WLR
+}
+
+cluster_WLR_pred[[3]][[12]]
+
+```
+
+
+# HAV-GAR New Optimization
+```{r}
+# Load necessary libraries
+library(caret)
+library(randomForest)
+
+# Function to stack models and predict over the entire period
+stacking_model_full_period <- function(cluster_HAV_pred, cluster_WLR_pred, cluster_vol_val) {
+  # Initialize lists to store results
+  stack_predictions <- list()
+  cluster_weights <- list()
+  
+  for (j in 1:4) {
+    # Prepare training data for the meta-model
+    meta_features_list <- list()
+    meta_target_list <- list()
+    
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+            if (min_length == 0) {
+          next
+      }
+      
+      # Trim or extend lists to the minimum length
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      vol_trimmed <- cluster_vol_val[[j]][[i]]$volatility[1:min_length]
+      
+      # Create data frame with trimmed lists
+      meta_features_list[[i]] <- data.frame(HAV = HAV_trimmed, WLR = WLR_trimmed)
+      meta_target_list[[i]] <- vol_trimmed
+    }
+    
+    # Combine all time buckets for training
+    meta_features <- do.call(rbind, meta_features_list)
+    meta_target <- unlist(meta_target_list)
+    
+    # Train the meta-model (e.g., random forest) using the entire dataset
+    meta_model <- randomForest(meta_features, meta_target)
+    
+    # Predict over the entire period for each time bucket
+    full_period_predictions <- list()
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length for prediction
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+            if (min_length == 0) {
+          next
+      }
+      
+      # Trim or extend lists to the minimum length for prediction
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      
+      full_period_data <- data.frame(
+        HAV = HAV_trimmed,
+        WLR = WLR_trimmed
+      )
+      
+      full_period_predictions[[i]] <- predict(meta_model, full_period_data)
+    }
+    
+    # Store the predictions for the entire period
+    stack_predictions[[j]] <- full_period_predictions
+    
+    # Store the trained meta-model for future use
+    cluster_weights[[j]] <- meta_model
+  }
+  
+  list(predictions = stack_predictions, models = cluster_weights)
+}
+
+# Perform stacking and predict over the entire period
+stacking_results <- stacking_model_full_period(cluster_HAV_pred, cluster_GAR_pred, cluster_vol_val)
+
+# Evaluate the performance over the entire period
+evaluate_performance_full_period <- function(stacking_results, cluster_vol_val) {
+  cluster_MSE_stack <- list()
+  cluster_QLIKE_stack <- list()
+  cluster_MAPE_stack <- list()
+  
+  for (j in 1:4) {
+    cat("Cluster", j, "Performance:\n")
+    mse_list <- vector()
+    qlike_list <- vector()
+    mape_list <- vector()
+    
+    for (i in 1:length(stacking_results$predictions[[j]])) {
+      predictions <- stacking_results$predictions[[j]][[i]]
+      actual <- cluster_vol_val[[j]][[i]]$volatility[1:length(predictions)]
+      
+      # Filter out Inf and NaN values for actual and predictions
+      valid_indices <- is.finite(actual) & is.finite(predictions) & actual != 0 & predictions != 0
+      actual <- actual[valid_indices]
+      predictions <- predictions[valid_indices]
+      
+      mse <- mean((actual - predictions) ^ 2, na.rm = TRUE)
+      qlike <- mean(actual / predictions - log(actual / predictions) - 1, na.rm = TRUE)
+      mape <- mean(abs(actual - predictions) / actual, na.rm = TRUE)
+      
+      mse_list <- c(mse_list, mse)
+      qlike_list <- c(qlike_list, qlike)
+      mape_list <- c(mape_list, mape)
+    }
+    
+    cluster_MSE_stack[[j]] <- mse_list
+    cluster_QLIKE_stack[[j]] <- qlike_list
+    cluster_MAPE_stack[[j]] <- mape_list
+    
+    cat("MSE:", mean(mse_list, na.rm = TRUE), "\n")
+    cat("QLIKE:", mean(qlike_list, na.rm = TRUE), "\n")
+    cat("MAPE:", mean(mape_list, na.rm = TRUE), "\n\n")
+  }
+  
+  return(list(MSE = cluster_MSE_stack, QLIKE = cluster_QLIKE_stack, MAPE = cluster_MAPE_stack))
+}
+
+# Evaluate and print the performance of the stacked models over the entire period
+cluster_SCORE_HAVGAR <- evaluate_performance_full_period(stacking_results, cluster_vol_val)
+```
+
+
+## Mixture Creation - HAV-WLR 
+```{r}
+# Load necessary libraries
+library(caret)
+library(randomForest)
+
+# Function to stack models and predict over the entire period
+stacking_model_full_period <- function(cluster_HAV_pred, cluster_WLR_pred, cluster_vol_val) {
+  # Initialize lists to store results
+  stack_predictions <- list()
+  cluster_weights <- list()
+  
+  for (j in 1:4) {
+    # Prepare training data for the meta-model
+    meta_features_list <- list()
+    meta_target_list <- list()
+    
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+      # Trim or extend lists to the minimum length
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      vol_trimmed <- cluster_vol_val[[j]][[i]]$volatility[1:min_length]
+      
+      # Create data frame with trimmed lists
+      meta_features_list[[i]] <- data.frame(HAV = HAV_trimmed, WLR = WLR_trimmed)
+      meta_target_list[[i]] <- vol_trimmed
+    }
+    
+    # Combine all time buckets for training
+    meta_features <- do.call(rbind, meta_features_list)
+    meta_target <- unlist(meta_target_list)
+    
+    # Train the meta-model (e.g., random forest) using the entire dataset
+    meta_model <- randomForest(meta_features, meta_target)
+    
+    # Predict over the entire period for each time bucket
+    full_period_predictions <- list()
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length for prediction
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+      # Trim or extend lists to the minimum length for prediction
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      
+      full_period_data <- data.frame(
+        HAV = HAV_trimmed,
+        WLR = WLR_trimmed
+      )
+      
+      full_period_predictions[[i]] <- predict(meta_model, full_period_data)
+    }
+    
+    # Store the predictions for the entire period
+    stack_predictions[[j]] <- full_period_predictions
+    
+    # Store the trained meta-model for future use
+    cluster_weights[[j]] <- meta_model
+  }
+  
+  list(predictions = stack_predictions, models = cluster_weights)
+}
+
+# Perform stacking and predict over the entire period
+stacking_results <- stacking_model_full_period(cluster_HAV_pred, cluster_WLR_pred, cluster_vol_val)
+
+# Evaluate the performance over the entire period
+evaluate_performance_full_period <- function(stacking_results, cluster_vol_val) {
+  cluster_MSE_stack <- list()
+  cluster_QLIKE_stack <- list()
+  cluster_MAPE_stack <- list()
+  
+  for (j in 1:4) {
+    cat("Cluster", j, "Performance:\n")
+    mse_list <- vector()
+    qlike_list <- vector()
+    mape_list <- vector()
+    
+    for (i in 1:length(stacking_results$predictions[[j]])) {
+      predictions <- stacking_results$predictions[[j]][[i]]
+      actual <- cluster_vol_val[[j]][[i]]$volatility[1:length(predictions)]
+      
+      # Filter out Inf and NaN values for actual and predictions
+      valid_indices <- is.finite(actual) & is.finite(predictions) & actual != 0 & predictions != 0
+      actual <- actual[valid_indices]
+      predictions <- predictions[valid_indices]
+      
+      mse <- mean((actual - predictions) ^ 2, na.rm = TRUE)
+      qlike <- mean(actual / predictions - log(actual / predictions) - 1, na.rm = TRUE)
+      mape <- mean(abs(actual - predictions) / actual, na.rm = TRUE)
+      
+      mse_list <- c(mse_list, mse)
+      qlike_list <- c(qlike_list, qlike)
+      mape_list <- c(mape_list, mape)
+    }
+    
+    cluster_MSE_stack[[j]] <- mse_list
+    cluster_QLIKE_stack[[j]] <- qlike_list
+    cluster_MAPE_stack[[j]] <- mape_list
+    
+    cat("MSE:", mean(mse_list, na.rm = TRUE), "\n")
+    cat("QLIKE:", mean(qlike_list, na.rm = TRUE), "\n")
+    cat("MAPE:", mean(mape_list, na.rm = TRUE), "\n\n")
+  }
+  
+  return(list(MSE = cluster_MSE_stack, QLIKE = cluster_QLIKE_stack, MAPE = cluster_MAPE_stack))
+}
+
+# Evaluate and print the performance of the stacked models over the entire period
+cluster_SCORE_HAVWLR <- evaluate_performance_full_period(stacking_results, cluster_vol_val)
+
+```
+
+
+## Mixture Creation - WLR-GARCH 
+# Stacking for GAR and WLR
+```{r}
+# Load necessary libraries
+library(caret)
+library(randomForest)
+
+# Function to stack models and predict over the entire period
+stacking_model_full_period <- function(cluster_HAV_pred, cluster_WLR_pred, cluster_vol_val) {
+  # Initialize lists to store results
+  stack_predictions <- list()
+  cluster_weights <- list()
+  
+  for (j in 1:4) {
+    # Prepare training data for the meta-model
+    meta_features_list <- list()
+    meta_target_list <- list()
+    
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+                  if (min_length == 0) {
+          next
+      }
+      
+      # Trim or extend lists to the minimum length
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      vol_trimmed <- cluster_vol_val[[j]][[i]]$volatility[1:min_length]
+      
+      # Create data frame with trimmed lists
+      meta_features_list[[i]] <- data.frame(HAV = HAV_trimmed, WLR = WLR_trimmed)
+      meta_target_list[[i]] <- vol_trimmed
+    }
+    
+    # Combine all time buckets for training
+    meta_features <- do.call(rbind, meta_features_list)
+    meta_target <- unlist(meta_target_list)
+    
+    # Train the meta-model (e.g., random forest) using the entire dataset
+    meta_model <- randomForest(meta_features, meta_target)
+    
+    # Predict over the entire period for each time bucket
+    full_period_predictions <- list()
+    for (i in 1:length(cluster_HAV_pred[[j]])) {
+      # Find the minimum length for prediction
+      min_length <- min(length(cluster_HAV_pred[[j]][[i]]), length(cluster_WLR_pred[[j]][[i]]))
+      
+                  if (min_length == 0) {
+          next
+      }
+      
+      # Trim or extend lists to the minimum length for prediction
+      HAV_trimmed <- cluster_HAV_pred[[j]][[i]][1:min_length]
+      WLR_trimmed <- cluster_WLR_pred[[j]][[i]][1:min_length]
+      
+      full_period_data <- data.frame(
+        HAV = HAV_trimmed,
+        WLR = WLR_trimmed
+      )
+      
+      full_period_predictions[[i]] <- predict(meta_model, full_period_data)
+    }
+    
+    # Store the predictions for the entire period
+    stack_predictions[[j]] <- full_period_predictions
+    
+    # Store the trained meta-model for future use
+    cluster_weights[[j]] <- meta_model
+  }
+  
+  list(predictions = stack_predictions, models = cluster_weights)
+}
+
+# Perform stacking and predict over the entire period
+stacking_results <- stacking_model_full_period(cluster_GAR_pred, cluster_WLR_pred, cluster_vol_val)
+
+# Evaluate the performance over the entire period
+evaluate_performance_full_period <- function(stacking_results, cluster_vol_val) {
+  cluster_MSE_stack <- list()
+  cluster_QLIKE_stack <- list()
+  cluster_MAPE_stack <- list()
+  
+  for (j in 1:4) {
+    cat("Cluster", j, "Performance:\n")
+    mse_list <- vector()
+    qlike_list <- vector()
+    mape_list <- vector()
+    
+    for (i in 1:length(stacking_results$predictions[[j]])) {
+      predictions <- stacking_results$predictions[[j]][[i]]
+      actual <- cluster_vol_val[[j]][[i]]$volatility[1:length(predictions)]
+      
+      # Filter out Inf and NaN values for actual and predictions
+      valid_indices <- is.finite(actual) & is.finite(predictions) & actual != 0 & predictions != 0
+      actual <- actual[valid_indices]
+      predictions <- predictions[valid_indices]
+      
+      mse <- mean((actual - predictions) ^ 2, na.rm = TRUE)
+      qlike <- mean(actual / predictions - log(actual / predictions) - 1, na.rm = TRUE)
+      mape <- mean(abs(actual - predictions) / actual, na.rm = TRUE)
+      
+      mse_list <- c(mse_list, mse)
+      qlike_list <- c(qlike_list, qlike)
+      mape_list <- c(mape_list, mape)
+    }
+    
+    cluster_MSE_stack[[j]] <- mse_list
+    cluster_QLIKE_stack[[j]] <- qlike_list
+    cluster_MAPE_stack[[j]] <- mape_list
+    
+    cat("MSE:", mean(mse_list, na.rm = TRUE), "\n")
+    cat("QLIKE:", mean(qlike_list, na.rm = TRUE), "\n")
+    cat("MAPE:", mean(mape_list, na.rm = TRUE), "\n\n")
+  }
+  
+    return(list(MSE = cluster_MSE_stack, QLIKE = cluster_QLIKE_stack, MAPE = cluster_MAPE_stack))
+}
+
+# Evaluate and print the performance of the stacked models over the entire period
+cluster_SCORE_GARWLR <- evaluate_performance_full_period(stacking_results, cluster_vol_val)
+```
+
+## Getting Optimal Performance Metrics
+```{r warning = False}
+
+# HAV Performance
+cluster_MSE_hav <- list()
+cluster_QLIKE_hav <- list()
+cluster_MAPE_hav <- list()
+for (j in 1:4) {
+  MSE.hav <- vector()
+  QLIKE.hav <- vector()
+  MAPE.hav <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.hav <- c(MSE.hav, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]]) ^ 2))
+    QLIKE.hav <- c(QLIKE.hav, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]]) - 1))
+    MAPE.hav <- c(MAPE.hav, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_hav[[j]] <- MSE.hav
+  cluster_QLIKE_hav[[j]] <- QLIKE.hav
+  cluster_MAPE_hav[[j]] <- MAPE.hav
+}
+
+# eGARCH Performance
+cluster_MSE_gar <- list()
+cluster_QLIKE_gar <- list()
+cluster_MAPE_gar <- list()
+for (j in 1:4) {
+  MSE.gar <- vector()
+  QLIKE.gar <- vector()
+  MAPE.gar <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.gar <- c(MSE.gar, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]]) ^ 2))
+    QLIKE.gar <- c(QLIKE.gar, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]]) - 1))
+    MAPE.gar <- c(MAPE.gar, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_gar[[j]] <- MSE.gar
+  cluster_QLIKE_gar[[j]] <- QLIKE.gar
+  cluster_MAPE_gar[[j]] <- MAPE.gar
+}
+
+# WLR Performance
+cluster_MSE_wlr <- list()
+cluster_QLIKE_wlr <- list()
+cluster_MAPE_wlr <- list()
+for (j in 1:4) {
+  MSE.wlr <- vector()
+  QLIKE.wlr <- vector()
+  MAPE.wlr <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.wlr <- c(MSE.wlr, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]]) ^ 2))
+    QLIKE.wlr <- c(QLIKE.wlr, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]]) - 1))
+    MAPE.wlr <- c(MAPE.wlr, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_wlr[[j]] <- MSE.wlr
+  cluster_QLIKE_wlr[[j]] <- QLIKE.wlr
+  cluster_MAPE_wlr[[j]] <- MAPE.wlr
+}
+
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Combine MAPE data into a single data frame
+combine_mape_data <- function(cluster_MAPE, model_name, cluster_num) {
+  data.frame(
+    Cluster = rep(cluster_num, length(unlist(cluster_MAPE))),
+    Model = rep(model_name, each = length(unlist(cluster_MAPE))),
+    MAPE = unlist(cluster_MAPE)
+  )
+}
+
+MAPE_hav_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_hav[[j]], "HAV-RV", j)))
+MAPE_gar_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_gar[[j]], "eGARCH", j)))
+MAPE_wlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_wlr[[j]], "WLR", j)))
+#MAPE_rf_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_rf[[j]], "RF", j)))
+#MAPE_havgar_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_HAVGAR[[j]], "HAV-GAR", j)))
+MAPE_havgar_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_SCORE_HAVGAR$MAPE[[j]], "HAV-GAR", j)))
+#MAPE_havwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_HAVWLR[[j]], "HAV-WLR", j)))
+MAPE_havwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_SCORE_HAVWLR$MAPE[[j]], "HAV-WLR", j)))
+#MAPE_garwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_MAPE_GARWLR[[j]], "GAR-WLR", j)))
+MAPE_garwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mape_data(cluster_SCORE_GARWLR$MAPE[[j]], "GAR-WLR", j)))
+
+
+# Combine all data frames
+# MAPE_performance <- rbind(MAPE_hav_df, MAPE_gar_df, MAPE_wlr_df, MAPE_rf_df, MAPE_havgar_df, MAPE_havgar_opt_df, MAPE_havwlr_df, MAPE_havwlr_opt_df, MAPE_garwlr_df, MAPE_garwlr_opt_df)
+#MAPE_performance <- rbind(MAPE_hav_df, MAPE_gar_df, MAPE_wlr_df, MAPE_havgar_df, MAPE_havwlr_df, MAPE_garwlr_df)
+MAPE_performance <- rbind(MAPE_hav_df, MAPE_gar_df, MAPE_wlr_df, MAPE_havgar_opt_df, MAPE_havwlr_opt_df, MAPE_garwlr_opt_df)
+
+
+MAPE_performance <- MAPE_performance %>%
+  filter(is.finite(MAPE))
+
+MAPE_summary <- MAPE_performance %>%
+  group_by(Cluster, Model) %>%
+  summarise(
+    #mean_MAPE = median(MAPE, na.rm = TRUE),
+    mean_MAPE = mean(MAPE, na.rm = TRUE),
+    IQR_MAPE = IQR(MAPE, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Function to create and rank tables for each cluster
+rank_tables <- function(cluster_num) {
+  MAPE_summary %>%
+    filter(Cluster == cluster_num) %>%
+    arrange(mean_MAPE, IQR_MAPE) %>%
+    mutate(
+      mean_MAPE_rank = rank(mean_MAPE),
+      IQR_MAPE_rank = rank(IQR_MAPE)
+    )
+}
+
+# Create and print tables for each cluster
+for (j in 1:4) {
+  cat("Cluster", j, "Ranking Table:\n")
+  print(rank_tables(j))
+  cat("\n")
+}
+
+```
+
+```{r}
+
+MAPE_performance_clean <- MAPE_performance %>%
+  filter(is.finite(MAPE))
+
+y_limits <- list(
+  c(0.0002903696, 2),  # Example range for Cluster 1
+  c(0.0003024344, 4),
+  c(0.0003024344, 4),
+  c(0.0003024344, 4)
+)
+
+ggplot(MAPE_performance_clean, aes(x = Model, y = MAPE, fill = Model)) +
+  geom_boxplot(outlier.shape = NA) + # Remove outliers
+  facet_wrap(~ Cluster, scales = "free_y", nrow = 2, ncol = 2) + # Create separate plots for each cluster
+  labs(title = "MAPE Performance of Models Across Clusters",
+       x = "Model",
+       y = "MAPE") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+        strip.text = element_text(size = 12), 
+        legend.position = "none") + # Hide legend as it's redundant with x-axis labels
+  geom_boxplot(outlier.shape = NA) +
+  #scale_y_continuous(limits = y_limits[[1]], breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(limits = c(0,4)) +
+  facet_wrap(~ Cluster, scales = "free_y", labeller = labeller(Cluster = c("1" = paste0("Cluster 1 (0, ", y_limits[[1]][2], ")"), 
+                                                                         "2" = paste0("Cluster 2 (0, ", y_limits[[2]][2], ")"),
+                                                                         "3" = paste0("Cluster 3 (0, ", y_limits[[3]][2], ")"),
+                                                                         "4" = paste0("Cluster 4 (0, ", y_limits[[4]][2], ")")))) +
+  geom_boxplot(outlier.shape = NA)
+
+```
+
+
+# MSE
+```{r}
+combine_mse_data <- function(cluster_MSE, model_name, cluster_num) {
+  data.frame(
+    Cluster = rep(cluster_num, length(unlist(cluster_MSE))),
+    Model = rep(model_name, each = length(unlist(cluster_MSE))),
+    MSE = unlist(cluster_MSE)
+  )
+}
+
+MSE_hav_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_hav[[j]], "HAV-RV", j)))
+MSE_gar_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_gar[[j]], "eGARCH", j)))
+MSE_wlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_wlr[[j]], "WLR", j)))
+#MSE_rf_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_rf[[j]], "RF", j)))
+#MSE_havgar_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_HAVGAR[[j]], "HAV-GAR", j)))
+MSE_havgar_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_SCORE_HAVGAR$MSE[[j]], "HAV-GAR", j)))
+#MSE_havwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_HAVWLR[[j]], "HAV-WLR", j)))
+MSE_havwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_SCORE_HAVWLR$MSE[[j]], "HAV-WLR", j)))
+#MSE_garwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_MSE_GARWLR[[j]], "GAR-WLR", j)))
+MSE_garwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_mse_data(cluster_SCORE_GARWLR$MSE[[j]], "GAR-WLR", j)))
+
+# Combine all data frames
+# MSE_performance <- rbind(MSE_hav_df, MSE_gar_df, MSE_wlr_df, MSE_rf_df, MSE_havgar_df, MSE_havgar_opt_df, MSE_havwlr_df, MSE_havwlr_opt_df, MSE_garwlr_df, MSE_garwlr_opt_df)
+MSE_performance <- rbind(MSE_hav_df, MSE_gar_df, MSE_wlr_df, MSE_havgar_opt_df, MSE_havwlr_opt_df, MSE_garwlr_opt_df)
+
+# Calculate mean MSE and IQR for each model in each cluster
+MSE_summary <- MSE_performance %>%
+  group_by(Cluster, Model) %>%
+  summarise(
+    mean_MSE = mean(MSE, na.rm = TRUE),
+    IQR_MSE = IQR(MSE, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Function to create and rank tables for each cluster
+rank_tables <- function(cluster_num) {
+  MSE_summary %>%
+    filter(Cluster == cluster_num) %>%
+    arrange(mean_MSE, IQR_MSE) %>%
+    mutate(
+      mean_MSE_rank = rank(mean_MSE),
+      IQR_MSE_rank = rank(IQR_MSE)
+    )
+}
+
+# Create and print tables for each cluster
+for (j in 1:4) {
+  cat("Cluster", j, "Ranking Table:\n")
+  print(rank_tables(j))
+  cat("\n")
+}
+```
+
+```{r}
+MSE_performance_clean <- MSE_performance %>%
+  filter(is.finite(MSE))
+
+y_limits <- list(
+  c(0.0002903696, 2),  # Example range for Cluster 1
+  c(0.0003024344, 4),
+  c(0.0003024344, 4),
+  c(0.0003024344, 4)
+)
+
+ggplot(MSE_performance_clean, aes(x = Model, y = MSE, fill = Model)) +
+  geom_boxplot(outlier.shape = NA) + # Remove outliers
+  facet_wrap(~ Cluster, scales = "free_y", nrow = 2, ncol = 2) + # Create separate plots for each cluster
+  labs(title = "MSE Performance of Models Across Clusters",
+       x = "Model",
+       y = "MSE") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+        strip.text = element_text(size = 12), 
+        legend.position = "none") + # Hide legend as it's redundant with x-axis labels
+  geom_boxplot(outlier.shape = NA) +
+  #scale_y_continuous(limits = y_limits[[1]], breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(limits = c(0,0.000001)) +
+  facet_wrap(~ Cluster, scales = "free_y", labeller = labeller(Cluster = c("1" = paste0("Cluster 1 (0, ", y_limits[[1]][2], ")"), 
+                                                                         "2" = paste0("Cluster 2 (0, ", y_limits[[2]][2], ")"),
+                                                                         "3" = paste0("Cluster 3 (0, ", y_limits[[3]][2], ")"),
+                                                                         "4" = paste0("Cluster 4 (0, ", y_limits[[4]][2], ")")))) +
+  geom_boxplot(outlier.shape = NA)
+```
+
+
+```{r}
+combine_qlike_data <- function(cluster_QLIKE, model_name, cluster_num) {
+  data.frame(
+    Cluster = rep(cluster_num, length(unlist(cluster_QLIKE))),
+    Model = rep(model_name, each = length(unlist(cluster_QLIKE))),
+    QLIKE = unlist(cluster_QLIKE)
+  )
+}
+
+QLIKE_hav_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_hav[[j]], "HAV-RV", j)))
+QLIKE_gar_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_gar[[j]], "eGARCH", j)))
+QLIKE_wlr_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_wlr[[j]], "WLR", j)))
+#QLIKE_rf_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_rf[[j]], "RF", j)))
+#QLIKE_havgar_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_HAVGAR[[j]], "HAV-GAR", j)))
+QLIKE_havgar_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_SCORE_HAVGAR$QLIKE[[j]], "HAV-GAR-OPT", j)))
+#QLIKE_havwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_HAVWLR[[j]], "HAV-WLR", j)))
+QLIKE_havwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_SCORE_HAVWLR$QLIKE[[j]], "HAV-WLR-OPT", j)))
+#QLIKE_garwlr_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_QLIKE_GARWLR[[j]], "GAR-WLR", j)))
+QLIKE_garwlr_opt_df <- do.call(rbind, lapply(1:4, function(j) combine_qlike_data(cluster_SCORE_GARWLR$QLIKE[[j]], "GAR-WLR-OPT", j)))
+
+# Combine all data frames
+# QLIKE_performance <- rbind(QLIKE_hav_df, QLIKE_gar_df, QLIKE_wlr_df, QLIKE_rf_df, QLIKE_havgar_df, QLIKE_havgar_opt_df, QLIKE_havwlr_df, QLIKE_havwlr_opt_df, QLIKE_garwlr_df, QLIKE_garwlr_opt_df)
+QLIKE_performance <- rbind(QLIKE_hav_df, QLIKE_gar_df, QLIKE_wlr_df, QLIKE_havgar_opt_df, QLIKE_havwlr_opt_df, QLIKE_garwlr_opt_df)
+
+
+QLIKE_performance <- QLIKE_performance %>%
+  filter(is.finite(QLIKE))
+
+QLIKE_summary <- QLIKE_performance %>%
+  group_by(Cluster, Model) %>%
+  summarise(
+    mean_QLIKE = median(QLIKE, na.rm = TRUE),
+    IQR_QLIKE = IQR(QLIKE, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Function to create and rank tables for each cluster
+rank_tables <- function(cluster_num) {
+  QLIKE_summary %>%
+    filter(Cluster == cluster_num) %>%
+    arrange(mean_QLIKE, IQR_QLIKE) %>%
+    mutate(
+      mean_QLIKE_rank = rank(mean_QLIKE),
+      IQR_QLIKE_rank = rank(IQR_QLIKE)
+    )
+}
+
+# Create and print tables for each cluster
+for (j in 1:4) {
+  cat("Cluster", j, "Ranking Table:\n")
+  print(rank_tables(j))
+  cat("\n")
+}
+```
+
+
+```{r}
+QLIKE_performance_clean <- QLIKE_performance %>%
+  filter(is.finite(QLIKE))
+
+y_limits <- list(
+  c(0.0002903696, 2),  # Example range for Cluster 1
+  c(0.0003024344, 4),
+  c(0.0003024344, 4),
+  c(0.0003024344, 4)
+)
+
+ggplot(QLIKE_performance_clean, aes(x = Model, y = QLIKE, fill = Model)) +
+  geom_boxplot(outlier.shape = NA) + # Remove outliers
+  facet_wrap(~ Cluster, scales = "free_y", nrow = 2, ncol = 2) + # Create separate plots for each cluster
+  labs(title = "QLIKE Performance of Models Across Clusters",
+       x = "Model",
+       y = "QLIKE") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), # Rotate x-axis labels for better readability
+        strip.text = element_text(size = 12), 
+        legend.position = "none") + # Hide legend as it's redundant with x-axis labels
+  geom_boxplot(outlier.shape = NA) +
+  #scale_y_continuous(limits = y_limits[[1]], breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(limits = c(0,0.7)) +
+  facet_wrap(~ Cluster, scales = "free_y", labeller = labeller(Cluster = c("1" = paste0("Cluster 1 (0, ", y_limits[[1]][2], ")"), 
+                                                                         "2" = paste0("Cluster 2 (0, ", y_limits[[2]][2], ")"),
+                                                                         "3" = paste0("Cluster 3 (0, ", y_limits[[3]][2], ")"),
+                                                                         "4" = paste0("Cluster 4 (0, ", y_limits[[4]][2], ")")))) +
+  geom_boxplot(outlier.shape = NA)
+
+```
+
+
+
+
+
