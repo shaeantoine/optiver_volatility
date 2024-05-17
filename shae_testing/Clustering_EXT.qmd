@@ -73,7 +73,7 @@ for (i in all.files.short) {
 ```{r}
 # boxplot(df_cl$mean_WAP)
 # boxplot(df_cl$imbalance)
-boxplot(sqrt(df_cl$rush))
+#boxplot(sqrt(df_cl$rush))
 
 ```
 
@@ -124,7 +124,7 @@ df_cl = df_cl |>
 
 # Both of these had the most differentiation 
 ```{r}
-df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "num_order")]
+#df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "num_order")]
 df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
 ```
 
@@ -132,7 +132,7 @@ df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")]
 ### Cluster with k = 4
 ```{r}
 df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "rush")] 
-df_cl$rush = log(sqrt(df_cl$rush))
+#df_cl$rush = log(sqrt(df_cl$rush))
 # df_cl$mean_WAP = log(df_cl$mean_WAP)
 # df_cl$imbalance = log(df_cl$imbalance)
 
@@ -160,34 +160,29 @@ plot_ly(x = df$imbalance, y = df$mean_WAP, z = df$rush, type = "scatter3d", mode
 ```
 
 ```{r}
-df_cl <- df_cl[c("name", "imbalance", "mean_WAP", "mean_BAS")] 
+df_cl <- df_cl[c("name", "imbalance", "mean_WAP")]#, "mean_BAS")] 
+#df_cl <- df_cl[c("name", "imbalance", "rush")]#, "mean_BAS")] 
 
-km.out <- kmeans(df_cl[-1], centers = k, nstart = 20)
+km.out <- kmeans(df_cl[-1], centers = 4, nstart = 20)
 
 df = data.frame(
     names = df_cl$name,
     imbalance = df_cl$imbalance,
+    #rush = df_cl$rush,
     mean_WAP = df_cl$mean_WAP,
-    mean_BAS = df_cl$mean_BAS,
+    #mean_BAS = df_cl$mean_BAS,
     cluster = factor(km.out$cluster)
 )
 
-# plot = ggplot(df, aes(x = volume, y = imbalance, z = wap, color = cluster, label = names)) + 
-#   geom_point() + 
-#   geom_text(aes(label=names), vjust = -1, hjust = 1) +
-#   theme_minimal() +
-#   labs(title = "Cluster Plot", x = "volume", y = "imbalance")
-# 
-# ggplotly(plot)
+plot = ggplot(df, aes(x = mean_WAP, y = imbalance, color = cluster, label = names)) +
+  geom_point() +
+  geom_text(aes(label=names), vjust = -1, hjust = 1) +
+  theme_minimal() +
+  labs(title = "Cluster Plot", x = "mean_WAP", y = "imbalance")
 
-plot_ly(x = df$imbalance, y = df$mean_WAP, z = df$mean_BAS, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
+ggplotly(plot)
+
+#plot_ly(x = df$imbalance, y = df$mean_WAP, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
+#plot_ly(x = df$imbalance, y = df$mean_WAP, z = df$mean_BAS, type = "scatter3d", mode = "markers", marker = list(color = df$cluster))
 
 ```
-
-
-
-# Top variable contenders
-imbalance/ WAP
-df$imbalance, y = df$range, z = df$wap - BAD
-
-# Y is not good!!
