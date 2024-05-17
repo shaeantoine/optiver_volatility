@@ -370,6 +370,73 @@ cluster_WLR_pred[[3]][[12]]
 ```
 
 
+## Getting Optimal Performance Metrics
+```{r}
+
+# HAV Performance
+cluster_MSE_hav <- list()
+cluster_QLIKE_hav <- list()
+cluster_MAPE_hav <- list()
+for (j in 1:4) {
+  MSE.hav <- vector()
+  QLIKE.hav <- vector()
+  MAPE.hav <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.hav <- c(MSE.hav, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]]) ^ 2))
+    QLIKE.hav <- c(QLIKE.hav, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]]) - 1))
+    MAPE.hav <- c(MAPE.hav, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_hav[[j]] <- MSE.hav
+  cluster_QLIKE_hav[[j]] <- QLIKE.hav
+  cluster_MAPE_hav[[j]] <- MAPE.hav
+}
+
+# eGARCH Performance
+cluster_MSE_gar <- list()
+cluster_QLIKE_gar <- list()
+cluster_MAPE_gar <- list()
+for (j in 1:4) {
+  MSE.gar <- vector()
+  QLIKE.gar <- vector()
+  MAPE.gar <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.gar <- c(MSE.gar, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]]) ^ 2))
+    QLIKE.gar <- c(QLIKE.gar, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]]) - 1))
+    MAPE.gar <- c(MAPE.gar, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_gar[[j]] <- MSE.gar
+  cluster_QLIKE_gar[[j]] <- QLIKE.gar
+  cluster_MAPE_gar[[j]] <- MAPE.gar
+}
+
+# WLR Performance
+cluster_MSE_wlr <- list()
+cluster_QLIKE_wlr <- list()
+cluster_MAPE_wlr <- list()
+for (j in 1:4) {
+  MSE.wlr <- vector()
+  QLIKE.wlr <- vector()
+  MAPE.wlr <- vector()
+  for (i in 1:length(cluster_vol_val[[j]])) {
+    MSE.wlr <- c(MSE.wlr, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]]) ^ 2))
+    QLIKE.wlr <- c(QLIKE.wlr, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]] - 
+                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]]) - 1))
+    MAPE.wlr <- c(MAPE.wlr, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]] /
+                                 cluster_vol_val[[j]][[i]]$volatility)))
+  }
+  cluster_MSE_wlr[[j]] <- MSE.wlr
+  cluster_QLIKE_wlr[[j]] <- QLIKE.wlr
+  cluster_MAPE_wlr[[j]] <- MAPE.wlr
+}
+
+```
+
+
+
 # HAV-GAR New Optimization
 ```{r}
 # Load necessary libraries
@@ -733,71 +800,6 @@ evaluate_performance_full_period <- function(stacking_results, cluster_vol_val) 
 
 # Evaluate and print the performance of the stacked models over the entire period
 cluster_SCORE_GARWLR <- evaluate_performance_full_period(stacking_results, cluster_vol_val)
-```
-
-## Getting Optimal Performance Metrics
-```{r warning = False}
-
-# HAV Performance
-cluster_MSE_hav <- list()
-cluster_QLIKE_hav <- list()
-cluster_MAPE_hav <- list()
-for (j in 1:4) {
-  MSE.hav <- vector()
-  QLIKE.hav <- vector()
-  MAPE.hav <- vector()
-  for (i in 1:length(cluster_vol_val[[j]])) {
-    MSE.hav <- c(MSE.hav, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]]) ^ 2))
-    QLIKE.hav <- c(QLIKE.hav, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]] - 
-                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_HAV_pred[[j]][[i]]) - 1))
-    MAPE.hav <- c(MAPE.hav, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_HAV_pred[[j]][[i]] /
-                                 cluster_vol_val[[j]][[i]]$volatility)))
-  }
-  cluster_MSE_hav[[j]] <- MSE.hav
-  cluster_QLIKE_hav[[j]] <- QLIKE.hav
-  cluster_MAPE_hav[[j]] <- MAPE.hav
-}
-
-# eGARCH Performance
-cluster_MSE_gar <- list()
-cluster_QLIKE_gar <- list()
-cluster_MAPE_gar <- list()
-for (j in 1:4) {
-  MSE.gar <- vector()
-  QLIKE.gar <- vector()
-  MAPE.gar <- vector()
-  for (i in 1:length(cluster_vol_val[[j]])) {
-    MSE.gar <- c(MSE.gar, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]]) ^ 2))
-    QLIKE.gar <- c(QLIKE.gar, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]] - 
-                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_GAR_pred[[j]][[i]]) - 1))
-    MAPE.gar <- c(MAPE.gar, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_GAR_pred[[j]][[i]] /
-                                 cluster_vol_val[[j]][[i]]$volatility)))
-  }
-  cluster_MSE_gar[[j]] <- MSE.gar
-  cluster_QLIKE_gar[[j]] <- QLIKE.gar
-  cluster_MAPE_gar[[j]] <- MAPE.gar
-}
-
-# WLR Performance
-cluster_MSE_wlr <- list()
-cluster_QLIKE_wlr <- list()
-cluster_MAPE_wlr <- list()
-for (j in 1:4) {
-  MSE.wlr <- vector()
-  QLIKE.wlr <- vector()
-  MAPE.wlr <- vector()
-  for (i in 1:length(cluster_vol_val[[j]])) {
-    MSE.wlr <- c(MSE.wlr, mean((cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]]) ^ 2))
-    QLIKE.wlr <- c(QLIKE.wlr, mean(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]] - 
-                                 log(cluster_vol_val[[j]][[i]]$volatility / cluster_WLR_pred[[j]][[i]]) - 1))
-    MAPE.wlr <- c(MAPE.wlr, mean(abs(cluster_vol_val[[j]][[i]]$volatility - cluster_WLR_pred[[j]][[i]] /
-                                 cluster_vol_val[[j]][[i]]$volatility)))
-  }
-  cluster_MSE_wlr[[j]] <- MSE.wlr
-  cluster_QLIKE_wlr[[j]] <- QLIKE.wlr
-  cluster_MAPE_wlr[[j]] <- MAPE.wlr
-}
-
 ```
 
 
