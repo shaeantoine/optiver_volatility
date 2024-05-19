@@ -46,7 +46,7 @@ imba_mean <- vector()
 BAS_mean <- vector()
 
 #time_IDs <- unique(stock$time_id)
-time_IDs <- unique(stock[, 1])[1:20]
+time_IDs <- unique(stock[, 1])[1:5]
 
 
 for (i in 1 : length(time_IDs)) {
@@ -80,10 +80,9 @@ for (i in 1 : length(log_rs)) {
 
 ```
 
-## Cluster ?
+## Cluster
 
 ```{r}
-#put into cluster base on Plot ***Eye balling***
 cluster_l <- vector()
 for (i in 1:length(vol)) {
   if (BAS_mean[[i]] > 0.15){cluster_l <- 4}
@@ -91,8 +90,6 @@ for (i in 1:length(vol)) {
   else if (imba_mean[[i]] < 0.45) {cluster_l[[i]] <- 2}
   else {cluster_l[[i]] <- 1}
 }
-
-cluster_l
 ```
 
 model
@@ -269,9 +266,9 @@ for (i in 1:length(vol)){
 
 # mix
 
-cluster 1,3 = HAV + WLR
+cluster 1,3 = EGARCH + WLR
 
-cluster 2,4 = EGARCH+ WLR
+cluster 2,4 = HAV+ WLR
 
 ```{r}
 mix <- list()
@@ -291,7 +288,7 @@ for(i in 1:length(vol)){
   mix[[i]]$val <- vol.val[[i]]$volatility[2:5]
   
   
-  if(cluster_l[[i]] == 1 | cluster_l[[i]] == 3){
+  if(cluster_l[[i]] == 2 | cluster_l[[i]] == 4){
     mix[[i]]$mod_a <- pred3[[i]][2:5]
     mix[[i]]$mod_b <- c(pred2[[i]][[2]],pred2[[i]][[3]],pred2[[i]][[4]],pred2[[i]][[5]])
     
@@ -388,7 +385,7 @@ for(i in 1:length(vol)){
       title = paste("Prediction Result"),
       tag = as.character(i),
       subtitle = paste("cluster ",as.character(cluster_l[[i]]),
-                       if(cluster_l[[i]] == 1|cluster_l[[i]] == 3){mod = "HAV + WLR"}
+                       if(cluster_l[[i]] == 2|cluster_l[[i]] == 4){mod = "HAV + WLR"}
                        else {mod = "EGARCH + WLR"},
                        "\n weight for each time interval : \n",
                        weight_p
@@ -396,8 +393,7 @@ for(i in 1:length(vol)){
       x = "Time interval",
       y = "Volatility",
       caption = "each time interval = 30 seconds"
-         )#+
-    #transition_reveal(time)
+         )
 }
 
 ```
@@ -409,5 +405,80 @@ all_plot
 # animation plot
 
 ```{r,warning=FALSE,message=FALSE}
+all_plot[[1]]+transition_reveal(time)
+all_plot[[2]]+transition_reveal(time)
+all_plot[[3]]+transition_reveal(time)
+all_plot[[4]]+transition_reveal(time)
 all_plot[[5]]+transition_reveal(time)
+```
+
+# 5 time id
+
+```{r}
+test_df <- list()
+for(i in 1:length(vol)){
+  pred_f <- rep(NaN,16)
+  mod_a <- rep(NaN,16)
+  mod_b <- rep(NaN,16)
+  alpha_w <- rep(NaN,16)
+  beta_w <- rep(NaN,16)
+  val <- rep(NaN,16)
+  time <- c(1:16)
+  test_df[[i]] <- data.frame(time,pred_f,mod_a,mod_b,alpha_w,beta_w,val)
+  test_df[[i]]$val <- vol.train[[i]]$volatility[1:16]
+  test_df[[i]]$val[16] <- vol.val[[i]]$volatility[1]
+}
+agg_mix <- data.frame(test_df[[1]])
+agg_mix <- rbind(agg_mix,mix[[1]])
+
+
+for(i in 2:length(mix)){
+  agg_mix <- rbind(agg_mix,test_df[[i]])
+  agg_mix <- rbind(agg_mix,mix[[i]])
+}
+agg_mix$time <- c(1:nrow(agg_mix))
+
+
+agg_mix$c1 <- rep(NaN,nrow(agg_mix))
+agg_mix$c2 <- rep(NaN,nrow(agg_mix))
+agg_mix$c3 <- rep(NaN,nrow(agg_mix))
+agg_mix$c4 <- rep(NaN,nrow(agg_mix))
+
+for(i in 1:length(vol)){
+  if(cluster_l[[i]]==1){
+    agg_mix$c1[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+  if(cluster_l[[i]]==2){
+    agg_mix$c2[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+  if(cluster_l[[i]]==3){
+    agg_mix$c3[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+  if(cluster_l[[i]]==4){
+    agg_mix$c4[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+}
+
+```
+
+```{r,warning=FALSE,message=FALSE}
+agg_plot <- ggplot(agg_mix, aes(x=time)) +
+  geom_line(aes(y = val,color = "Volatility"))+
+  geom_line(aes(y = c1,color = "Cluster 1"))+
+  geom_line(aes(y = c2,color = "Cluster 2"))+
+  geom_line(aes(y = c3,color = "Cluster 3"))+
+  geom_line(aes(y = c4,color = "Cluster 4"))+
+  geom_line(aes(y = pred_f,color = "Prediction"), linetype="twodash")+
+  scale_color_manual(name = "Cluster/Prediction", values = c(
+    "Volatility" = "lightgrey",
+    "Cluster 1" = "darkgreen",
+    "Cluster 2"="gold",
+    "Cluster 3"="red",
+    "Cluster 4" = "blue",
+    "Prediction" = "black"))+
+  theme_classic()+
+  labs(
+    title = paste("Cluster/Prediction Result"),
+    x = "Time interval",
+    y = "Volatility",
+    caption = "each time interval = 30 seconds"
+       )
+
+agg_plot+transition_reveal(time)
 ```
