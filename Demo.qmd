@@ -426,7 +426,11 @@ agg_plot <- ggplot(agg_mix, aes(x=time)) +
     caption = "each time interval = 30 seconds"
        )
 
-agg_plot+transition_reveal(time)
+agg_plot
+```
+
+```{r}
+agg_plot + transition_reveal(time)
 ```
 
 # Zoom in prediction Plot
