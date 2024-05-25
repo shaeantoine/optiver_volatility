@@ -382,17 +382,14 @@ for(i in 1:length(vol)){
       "Mix Model" = "blue"))+
     theme_classic()+
     labs(
-      title = paste("Prediction Result"),
+      title = paste("Prediction Result\ncluster ",as.character(cluster_l[[i]]),
+                    if(cluster_l[[i]] == 2|cluster_l[[i]] == 4){mod = "HAV + WLR"}
+                       else {mod = "EGARCH + WLR,"}," weight for each time interval : "),
       tag = as.character(i),
-      subtitle = paste("cluster ",as.character(cluster_l[[i]]),
-                       if(cluster_l[[i]] == 2|cluster_l[[i]] == 4){mod = "HAV + WLR"}
-                       else {mod = "EGARCH + WLR"},
-                       "\n weight for each time interval : \n",
-                       weight_p
-                       ),
+      subtitle = paste( weight_p),
+      caption = "each time interval = 30 seconds",
       x = "Time interval",
-      y = "Volatility",
-      caption = "each time interval = 30 seconds"
+      y = "Volatility"
          )
 }
 
@@ -406,13 +403,17 @@ all_plot
 
 ```{r,warning=FALSE,message=FALSE}
 all_plot[[1]]+transition_reveal(time)
-all_plot[[2]]+transition_reveal(time)
-all_plot[[3]]+transition_reveal(time)
-all_plot[[4]]+transition_reveal(time)
-all_plot[[5]]+transition_reveal(time)
+#all_plot[[2]]+transition_reveal(time)
+#all_plot[[3]]+transition_reveal(time)
+#all_plot[[4]]+transition_reveal(time)
+#all_plot[[5]]+transition_reveal(time)
 ```
 
 # 5 time id
+
+cluster 1,3 = EGARCH + WLR
+
+cluster 2,4 = HAV+ WLR
 
 ```{r}
 test_df <- list()
@@ -443,16 +444,27 @@ agg_mix$c1 <- rep(NaN,nrow(agg_mix))
 agg_mix$c2 <- rep(NaN,nrow(agg_mix))
 agg_mix$c3 <- rep(NaN,nrow(agg_mix))
 agg_mix$c4 <- rep(NaN,nrow(agg_mix))
+agg_mix$mod_1 <- rep(NaN,nrow(agg_mix))
+agg_mix$mod_2 <- rep(NaN,nrow(agg_mix))
+
 
 for(i in 1:length(vol)){
   if(cluster_l[[i]]==1){
-    agg_mix$c1[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+    agg_mix$c1[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]
+    agg_mix$mod_1[(((i-1)*20) +1):(i*20)] <- agg_mix$pred_f[(((i-1)*20) +1):(i*20)]
+    }
   if(cluster_l[[i]]==2){
-    agg_mix$c2[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+    agg_mix$c2[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]
+    agg_mix$mod_2[(((i-1)*20) +1):(i*20)] <- agg_mix$pred_f[(((i-1)*20) +1):(i*20)]
+    }
   if(cluster_l[[i]]==3){
-    agg_mix$c3[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+    agg_mix$c3[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]
+    agg_mix$mod_1[(((i-1)*20) +1):(i*20)] <- agg_mix$pred_f[(((i-1)*20) +1):(i*20)]
+    }
   if(cluster_l[[i]]==4){
-    agg_mix$c4[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]}
+    agg_mix$c4[(((i-1)*20) +1):(i*20)] <- agg_mix$val[(((i-1)*20) +1):(i*20)]
+    agg_mix$mod_2[(((i-1)*20) +1):(i*20)] <- agg_mix$pred_f[(((i-1)*20) +1):(i*20)]
+    }
 }
 
 ```
@@ -464,14 +476,17 @@ agg_plot <- ggplot(agg_mix, aes(x=time)) +
   geom_line(aes(y = c2,color = "Cluster 2"))+
   geom_line(aes(y = c3,color = "Cluster 3"))+
   geom_line(aes(y = c4,color = "Cluster 4"))+
-  geom_line(aes(y = pred_f,color = "Prediction"), linetype="twodash")+
+  geom_line(aes(y = mod_1,color = "EGARCH + WLR"), linetype="twodash")+
+  geom_line(aes(y = mod_2,color = "HAV+ WLR"), linetype="twodash")+
   scale_color_manual(name = "Cluster/Prediction", values = c(
     "Volatility" = "lightgrey",
     "Cluster 1" = "darkgreen",
     "Cluster 2"="gold",
     "Cluster 3"="red",
     "Cluster 4" = "blue",
-    "Prediction" = "black"))+
+    "EGARCH + WLR" = "black",
+    "HAV+ WLR" = "orange"
+    ),)+
   theme_classic()+
   labs(
     title = paste("Cluster/Prediction Result"),
